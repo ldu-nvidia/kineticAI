@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MyCarv_1.0</string>
+    <string name="tracking_notification_channel">Ski Tracking</string>
+    <string name="tracking_notification_title">MyCarv is tracking your run</string>
+    <string name="tracking_notification_text">Recording sensor data…</string>
+</resources>
