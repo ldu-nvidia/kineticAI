@@ -84,8 +84,9 @@ class FeedbackGenerator {
             }
         }
 
-        // ACL warning overrides normal coaching — safety first
+        // ACL warning overrides everything — safety first
         if (metrics.aclRiskMax > 60f) {
+            lastFeedbackTime = System.currentTimeMillis()
             return CoachingTip(
                 "Knee collapsing inward — focus on keeping knees tracking over toes. " +
                     "This protects your ACL.",
@@ -93,10 +94,48 @@ class FeedbackGenerator {
             )
         }
 
+        // Fatigue warning — second priority
+        if (metrics.fatigueIndicator > 25f && metrics.turnCount > 15) {
+            lastFeedbackTime = System.currentTimeMillis()
+            return CoachingTip(
+                "Your technique is declining (${String.format("%.0f", metrics.fatigueIndicator)}% drop from start). " +
+                    "Consider taking a break or doing easier terrain.",
+                CoachingTip.Priority.MEDIUM, SkillCategory.BALANCE,
+            )
+        }
+
+        // Asymmetry coaching — every ~20 turns, highlight the weaker side
+        if (metrics.turnCount > 10 && metrics.turnCount % 20 < 3 &&
+            metrics.asymmetryScore < 70f && metrics.weakerSide.isNotEmpty()
+        ) {
+            lastFeedbackTime = System.currentTimeMillis()
+            return CoachingTip(
+                "Your ${metrics.weakerSide.lowercase()} turns are weaker " +
+                    "(${metrics.weakerSideMetric} asymmetry). " +
+                    "Focus on matching your strong side — practice ${metrics.weakerSide.lowercase()} turns only.",
+                CoachingTip.Priority.MEDIUM, SkillCategory.EDGING,
+            )
+        }
+
+        // Phase-specific coaching — identify weakest turn phase
+        if (metrics.weakestPhase.isNotEmpty() && metrics.turnCount > 8) {
+            val phaseScore = when (metrics.weakestPhase) {
+                "Initiation" -> metrics.phaseInitScore
+                "Steering In" -> metrics.phaseSteerInScore
+                "Apex" -> metrics.phaseApexScore
+                "Steering Out" -> metrics.phaseSteerOutScore
+                "Transition" -> metrics.phaseTransitionScore
+                else -> 100f
+            }
+            if (phaseScore < 40f) {
+                candidates.add(MetricEntry("phase_${metrics.weakestPhase}", phaseScore, SkillCategory.BALANCE))
+            }
+        }
+
         if (candidates.isEmpty()) return null
 
         val weakest = candidates.minByOrNull { it.score } ?: return null
-        if (weakest.score > 75f) return null // all metrics are good
+        if (weakest.score > 75f) return null
 
         return generateTipForMetric(weakest.name, weakest.score, weakest.cat, metrics, turn)
     }
@@ -200,6 +239,26 @@ class FeedbackGenerator {
                     "Decent carving$snowNote. Keep working on clean edge engagement " +
                         "for those railroad-track arcs."
             }
+
+            "phase_Initiation" ->
+                "Your turn initiation is weak. Focus on the first moment: topple into the turn, " +
+                    "transfer weight early, and get on edge before the fall line."
+
+            "phase_Steering In" ->
+                "The steering-in phase needs work. After initiating, keep building your edge angle " +
+                    "progressively — think dimmer switch, not light switch."
+
+            "phase_Apex" ->
+                "Your turn apex is underpowered. At the midpoint of the turn, you should be at " +
+                    "peak edge angle and peak G-force. Commit more through the belly of the turn."
+
+            "phase_Steering Out" ->
+                "You're releasing too early. Sustain your edge angle and turn shape through the " +
+                    "second half of the turn. Don't rush to the next turn."
+
+            "phase_Transition" ->
+                "Your transition between turns is weak. Focus on active unweighting — flex and " +
+                    "retract your legs to create lightness. Use the rebound energy."
 
             else ->
                 "Focus on your technique fundamentals. Score: ${String.format("%.0f", score)}"
@@ -407,6 +466,64 @@ class FeedbackGenerator {
                 "Caught ${metrics.jumpCount} jump${if (metrics.jumpCount > 1) "s" else ""} " +
                     "with ${String.format("%.1f", airtimeSec)}s total airtime!"
             )
+        }
+
+        // ── Turn Phase Breakdown ──
+        if (metrics.turnCount >= 5) {
+            tips.add(
+                "Turn Phase Scores: Init ${metrics.phaseInitScore.toInt()} | " +
+                    "SteerIn ${metrics.phaseSteerInScore.toInt()} | " +
+                    "Apex ${metrics.phaseApexScore.toInt()} | " +
+                    "SteerOut ${metrics.phaseSteerOutScore.toInt()} | " +
+                    "Transition ${metrics.phaseTransitionScore.toInt()}"
+            )
+            if (metrics.weakestPhase.isNotEmpty()) {
+                tips.add("Weakest phase: ${metrics.weakestPhase} — focus your practice here.")
+            }
+        }
+
+        // ── Asymmetry Analysis ──
+        if (metrics.leftTurnCount >= 3 && metrics.rightTurnCount >= 3) {
+            tips.add(
+                "Left turns: edge ${String.format("%.1f", metrics.leftEdgeAngleAvg)}° / " +
+                    "G ${String.format("%.1f", metrics.leftGForceAvg)}G  |  " +
+                    "Right turns: edge ${String.format("%.1f", metrics.rightEdgeAngleAvg)}° / " +
+                    "G ${String.format("%.1f", metrics.rightGForceAvg)}G"
+            )
+            if (metrics.asymmetryScore < 70f) {
+                tips.add(
+                    "Significant asymmetry (${metrics.asymmetryScore.toInt()}% symmetry). " +
+                        "${metrics.weakerSide} turns are weaker in ${metrics.weakerSideMetric}. " +
+                        "Practice your weak side with single-direction drills."
+                )
+            } else {
+                tips.add("Good turn symmetry (${metrics.asymmetryScore.toInt()}%).")
+            }
+        }
+
+        // ── Fatigue Report ──
+        if (metrics.turnCount >= 15) {
+            when {
+                metrics.fatigueIndicator > 30f ->
+                    tips.add(
+                        "Fatigue detected: Ski:IQ dropped ${String.format("%.0f", metrics.fatigueIndicator)}% " +
+                            "from the start of this run. Your early turns were Ski:IQ " +
+                            "${String.format("%.0f", metrics.earlyRunSkiIQ)} vs recent " +
+                            "${String.format("%.0f", metrics.currentWindowSkiIQ)}. Take a break!"
+                    )
+                metrics.skiIQTrend > 5f ->
+                    tips.add("You improved during this run! Ski:IQ trend: +${String.format("%.0f", metrics.skiIQTrend)}.")
+                metrics.skiIQTrend < -5f ->
+                    tips.add("Ski:IQ declined during this run (${String.format("%.0f", metrics.skiIQTrend)}). Normal fatigue or conditions changed.")
+            }
+        }
+
+        // ── Personal Progress ──
+        if (metrics.personalBestSkiIQ > 0) {
+            tips.add("Personal best Ski:IQ: ${metrics.personalBestSkiIQ}")
+            if (metrics.improvementPct > 5f) {
+                tips.add("You're ${String.format("%.0f", metrics.improvementPct)}% above your baseline — great improvement!")
+            }
         }
 
         return tips

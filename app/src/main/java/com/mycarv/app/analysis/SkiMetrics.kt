@@ -100,8 +100,38 @@ data class SkiMetrics(
     val separationAvg: Float = 0f,          // average segment separation score
     val carveQualityScore: Float = 0f,      // 0-100 from mic (clean=100, skid=0)
     val snowType: String = "Unknown",       // current snow type label
-    val jumpCount: Int = 0,                 // airborne events detected
-    val totalAirtimeMs: Long = 0,           // cumulative airtime
+    val jumpCount: Int = 0,
+    val totalAirtimeMs: Long = 0,
+
+    // ── ASYMMETRY (left vs right per-metric comparison) ──
+    val leftEdgeAngleAvg: Float = 0f,
+    val rightEdgeAngleAvg: Float = 0f,
+    val leftGForceAvg: Float = 0f,
+    val rightGForceAvg: Float = 0f,
+    val leftEarlyEdgingAvg: Float = 0f,
+    val rightEarlyEdgingAvg: Float = 0f,
+    val weakerSide: String = "",            // "LEFT" or "RIGHT" or ""
+    val asymmetryScore: Float = 100f,       // 100=symmetric, 0=very asymmetric
+    val weakerSideMetric: String = "",      // which metric differs most
+
+    // ── FATIGUE ──
+    val fatigueIndicator: Float = 0f,       // 0=fresh, 100=exhausted (Ski:IQ decline rate)
+    val skiIQTrend: Float = 0f,             // positive=improving, negative=declining
+    val earlyRunSkiIQ: Float = 0f,          // avg Ski:IQ from first 10 turns
+    val currentWindowSkiIQ: Float = 0f,     // avg Ski:IQ from last 10 turns
+
+    // ── TURN PHASE SCORES (per-phase averages, 0-100) ──
+    val phaseInitScore: Float = 0f,         // early edging + weight transfer in 0-25%
+    val phaseSteerInScore: Float = 0f,      // progressive edge + knee deepening in 25-50%
+    val phaseApexScore: Float = 0f,         // peak edge + peak G in 50%
+    val phaseSteerOutScore: Float = 0f,     // edge sustain + turn closure in 50-85%
+    val phaseTransitionScore: Float = 0f,   // weight release + rebound in 85-100%
+    val weakestPhase: String = "",          // which phase needs most work
+
+    // ── ADAPTIVE SCORING ──
+    val personalBestSkiIQ: Int = 0,         // highest Ski:IQ ever achieved
+    val personalBaselineSkiIQ: Float = 0f,  // baseline from first 50 turns
+    val improvementPct: Float = 0f,         // % improvement over personal baseline
 
     // ── STATE ──
     val runDurationMs: Long = 0,

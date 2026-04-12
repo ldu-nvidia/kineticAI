@@ -42,7 +42,26 @@ class SkiAnalysisEngine(sampleRateHz: Float = 50f) {
     // Calibration state
     private var calibrationSamples = 0
     private var calibrationAccelSum = floatArrayOf(0f, 0f, 0f)
-    private val CALIBRATION_SAMPLES = 50 // ~1 second at 50 Hz
+    private val CALIBRATION_SAMPLES = 50
+
+    // ── Asymmetry tracking ──
+    private val leftTurnEdges = mutableListOf<Float>()
+    private val rightTurnEdges = mutableListOf<Float>()
+    private val leftTurnGForces = mutableListOf<Float>()
+    private val rightTurnGForces = mutableListOf<Float>()
+    private val leftTurnEarlyEdging = mutableListOf<Float>()
+    private val rightTurnEarlyEdging = mutableListOf<Float>()
+
+    // ── Fatigue tracking ──
+    private val skiIQPerTurnWindow = mutableListOf<Float>()
+    private var earlyRunSkiIQSum = 0f
+    private var earlyRunSkiIQCount = 0
+    private var earlyRunSkiIQAvg = 0f
+
+    // ── Adaptive scoring ──
+    private var personalBestSkiIQ = 0
+    private var baselineTurnScores = mutableListOf<Float>()
+    private var personalBaseline = 0f
 
     private var _metrics = SkiMetrics()
     val metrics: SkiMetrics get() = _metrics
@@ -133,7 +152,19 @@ class SkiAnalysisEngine(sampleRateHz: Float = 50f) {
             lateralG = lateralG,
         )
 
-        turn?.let { turns.add(it) }
+        turn?.let {
+            turns.add(it)
+            // Track per-side metrics for asymmetry analysis
+            if (it.direction == TurnDirection.LEFT) {
+                leftTurnEdges.add(it.edgeAngle)
+                leftTurnGForces.add(it.gForce)
+                leftTurnEarlyEdging.add(it.earlyEdgingScore)
+            } else {
+                rightTurnEdges.add(it.edgeAngle)
+                rightTurnGForces.add(it.gForce)
+                rightTurnEarlyEdging.add(it.earlyEdgingScore)
+            }
+        }
 
         if (lateralG > maxGForce) maxGForce = lateralG
 
@@ -343,6 +374,37 @@ class SkiAnalysisEngine(sampleRateHz: Float = 50f) {
             snowType = currentSnowType,
             jumpCount = jumpCount,
             totalAirtimeMs = totalAirtimeMs,
+
+            // ── Asymmetry ──
+            leftEdgeAngleAvg = if (leftTurnEdges.isNotEmpty()) leftTurnEdges.average().toFloat() else 0f,
+            rightEdgeAngleAvg = if (rightTurnEdges.isNotEmpty()) rightTurnEdges.average().toFloat() else 0f,
+            leftGForceAvg = if (leftTurnGForces.isNotEmpty()) leftTurnGForces.average().toFloat() else 0f,
+            rightGForceAvg = if (rightTurnGForces.isNotEmpty()) rightTurnGForces.average().toFloat() else 0f,
+            leftEarlyEdgingAvg = if (leftTurnEarlyEdging.isNotEmpty()) leftTurnEarlyEdging.average().toFloat() else 0f,
+            rightEarlyEdgingAvg = if (rightTurnEarlyEdging.isNotEmpty()) rightTurnEarlyEdging.average().toFloat() else 0f,
+            weakerSide = computeWeakerSide(),
+            asymmetryScore = computeAsymmetryScore(),
+            weakerSideMetric = computeWeakerSideMetric(),
+
+            // ── Fatigue ──
+            fatigueIndicator = computeFatigueIndicator(skiIQ),
+            skiIQTrend = computeSkiIQTrend(),
+            earlyRunSkiIQ = earlyRunSkiIQAvg,
+            currentWindowSkiIQ = if (skiIQPerTurnWindow.size >= 5) skiIQPerTurnWindow.takeLast(5).average().toFloat() else skiIQ.toFloat(),
+
+            // ── Turn Phase Scores ──
+            phaseInitScore = turnsAvg { it.earlyEdgingScore * 0.5f + it.earlyForwardScore * 0.5f },
+            phaseSteerInScore = turnsAvg { it.progressiveEdgeScore },
+            phaseApexScore = turnsAvg { (it.edgeAngle / 60f * 100f).coerceIn(0f, 100f) * 0.5f + (it.gForce / 3f * 100f).coerceIn(0f, 100f) * 0.5f },
+            phaseSteerOutScore = turnsAvg { it.progressiveEdgeScore * 0.5f + it.turnShapeScore * 0.5f },
+            phaseTransitionScore = turnsAvg { it.weightReleaseScore * 0.5f + it.pressureSmoothnessScore * 0.5f },
+            weakestPhase = computeWeakestPhase(),
+
+            // ── Adaptive Scoring ──
+            personalBestSkiIQ = personalBestSkiIQ,
+            personalBaselineSkiIQ = personalBaseline,
+            improvementPct = if (personalBaseline > 0) ((skiIQ - personalBaseline) / personalBaseline * 100f) else 0f,
+
             runDurationMs = duration,
             isMoving = currentSpeed > 1.5f,
             currentGForce = lateralG,
@@ -350,11 +412,83 @@ class SkiAnalysisEngine(sampleRateHz: Float = 50f) {
             currentRoll = roll,
             currentPitch = pitch,
         )
+
+        // Track Ski:IQ over time for fatigue detection
+        skiIQPerTurnWindow.add(skiIQ.toFloat())
+        if (turns.size <= 10) {
+            earlyRunSkiIQSum += skiIQ
+            earlyRunSkiIQCount++
+            earlyRunSkiIQAvg = earlyRunSkiIQSum / earlyRunSkiIQCount
+        }
+        // Track personal best and baseline
+        if (skiIQ > personalBestSkiIQ) personalBestSkiIQ = skiIQ
+        if (baselineTurnScores.size < 50) {
+            baselineTurnScores.add(skiIQ.toFloat())
+            if (baselineTurnScores.size == 50) {
+                personalBaseline = baselineTurnScores.average().toFloat()
+            }
+        }
     }
 
     private fun turnsAvg(selector: (DetectedTurn) -> Float): Float {
         if (turns.isEmpty()) return 0f
         return turns.map(selector).average().toFloat()
+    }
+
+    // ── Asymmetry Computation ──
+
+    private fun computeWeakerSide(): String {
+        val leftAvg = if (leftTurnEdges.isNotEmpty()) leftTurnEdges.average() else 0.0
+        val rightAvg = if (rightTurnEdges.isNotEmpty()) rightTurnEdges.average() else 0.0
+        if (leftTurnEdges.isEmpty() || rightTurnEdges.isEmpty()) return ""
+        return if (leftAvg < rightAvg) "LEFT" else "RIGHT"
+    }
+
+    private fun computeAsymmetryScore(): Float {
+        if (leftTurnEdges.isEmpty() || rightTurnEdges.isEmpty()) return 100f
+        val edgeDiff = abs(leftTurnEdges.average() - rightTurnEdges.average()).toFloat()
+        val gDiff = abs(leftTurnGForces.average() - rightTurnGForces.average()).toFloat()
+        val earlyDiff = abs(leftTurnEarlyEdging.average() - rightTurnEarlyEdging.average()).toFloat()
+        val totalDiff = edgeDiff / 60f * 100f + gDiff / 3f * 100f + earlyDiff
+        return (100f - totalDiff / 3f).coerceIn(0f, 100f)
+    }
+
+    private fun computeWeakerSideMetric(): String {
+        if (leftTurnEdges.isEmpty() || rightTurnEdges.isEmpty()) return ""
+        val edgeDiffPct = abs(leftTurnEdges.average() - rightTurnEdges.average()) / maxOf(leftTurnEdges.average(), rightTurnEdges.average(), 1.0) * 100
+        val gDiffPct = if (leftTurnGForces.isNotEmpty() && rightTurnGForces.isNotEmpty())
+            abs(leftTurnGForces.average() - rightTurnGForces.average()) / maxOf(leftTurnGForces.average(), rightTurnGForces.average(), 0.1) * 100 else 0.0
+        return if (edgeDiffPct > gDiffPct) "Edge Angle" else "G-Force"
+    }
+
+    // ── Fatigue Computation ──
+
+    private fun computeFatigueIndicator(currentSkiIQ: Int): Float {
+        if (earlyRunSkiIQAvg <= 0 || turns.size < 15) return 0f
+        val recentAvg = if (skiIQPerTurnWindow.size >= 5) skiIQPerTurnWindow.takeLast(5).average().toFloat() else currentSkiIQ.toFloat()
+        val decline = (earlyRunSkiIQAvg - recentAvg) / earlyRunSkiIQAvg * 100f
+        return decline.coerceIn(0f, 100f)
+    }
+
+    private fun computeSkiIQTrend(): Float {
+        if (skiIQPerTurnWindow.size < 10) return 0f
+        val firstHalf = skiIQPerTurnWindow.take(skiIQPerTurnWindow.size / 2).average().toFloat()
+        val secondHalf = skiIQPerTurnWindow.takeLast(skiIQPerTurnWindow.size / 2).average().toFloat()
+        return secondHalf - firstHalf
+    }
+
+    // ── Phase Scoring ──
+
+    private fun computeWeakestPhase(): String {
+        if (turns.isEmpty()) return ""
+        val phases = mapOf(
+            "Initiation" to turnsAvg { it.earlyEdgingScore * 0.5f + it.earlyForwardScore * 0.5f },
+            "Steering In" to turnsAvg { it.progressiveEdgeScore },
+            "Apex" to turnsAvg { (it.edgeAngle / 60f * 100f).coerceIn(0f, 100f) * 0.5f + (it.gForce / 3f * 100f).coerceIn(0f, 100f) * 0.5f },
+            "Steering Out" to turnsAvg { it.progressiveEdgeScore * 0.5f + it.turnShapeScore * 0.5f },
+            "Transition" to turnsAvg { it.weightReleaseScore * 0.5f + it.pressureSmoothnessScore * 0.5f },
+        )
+        return phases.minByOrNull { it.value }?.key ?: ""
     }
 
     /**

@@ -413,30 +413,29 @@ void loop() {
         );
     }
 
-    // ── BLE Streaming (rate from power config) ──
+    // ── BLE Streaming: Merged Motion Packet (34 bytes @ 50Hz) ──
+    // Combines IMU + DualIMU + TriSegment into one notification
     if (bleConnected && (now - lastBleTime >= currentConfig.bleIntervalMs)) {
         lastBleTime = now;
-        // Send compressed 12-byte int16 packet instead of 24-byte float
-        uint8_t compressedPacket[12];
-        packImuCompressed(packet, compressedPacket);
-        pImuChar->setValue(compressedPacket, 12);
+
+        uint8_t motionPacket[34];
+        // Bytes 0-11: Compressed IMU (6x int16)
+        packImuCompressed(packet, motionPacket);
+        // Bytes 12-21: Dual IMU metrics
+        if (dualMetrics.valid) {
+            packDualImuMetrics(motionPacket + 12);
+        } else {
+            memset(motionPacket + 12, 0, 10);
+        }
+        // Bytes 22-33: Tri-segment metrics
+        if (triMetrics.valid) {
+            packTriSegmentMetrics(motionPacket + 22);
+        } else {
+            memset(motionPacket + 22, 0, 12);
+        }
+
+        pImuChar->setValue(motionPacket, 34);
         pImuChar->notify();
-
-        // Send dual IMU metrics if external sensors present
-        if (dualMetrics.valid && pDualChar) {
-            uint8_t dualPacket[10];
-            packDualImuMetrics(dualPacket);
-            pDualChar->setValue(dualPacket, 10);
-            pDualChar->notify();
-        }
-
-        // Send tri-segment metrics if all three IMUs present
-        if (triMetrics.valid && pTriChar) {
-            uint8_t triPacket[12];
-            packTriSegmentMetrics(triPacket);
-            pTriChar->setValue(triPacket, 12);
-            pTriChar->notify();
-        }
     }
 
     // ACL warning: immediate alert via buzzer + vibration
@@ -477,17 +476,24 @@ void loop() {
 
     // ── Microphone Analysis (rate from power config) ──
     if (currentConfig.micEnabled && runMicAnalysis()) {
-        // Send mic data over BLE
+        // Merged Environment Packet (18 bytes @ 2Hz): Mic + Thermal
         if (bleConnected && pMicChar) {
-            uint8_t micPacket[6];
-            packMicResult(micPacket);
-            pMicChar->setValue(micPacket, 6);
+            uint8_t envPacket[18];
+            // Bytes 0-5: Mic analysis
+            packMicResult(envPacket);
+            // Bytes 6-17: Thermal analysis
+            if (thermalData.valid) {
+                packThermalAnalysis(envPacket + 6);
+            } else {
+                memset(envPacket + 6, 0, 12);
+            }
+            pMicChar->setValue(envPacket, 18);
             pMicChar->notify();
         }
 
         // Fall detection: trigger LED warning + buzzer
         if (micResult.fallDetected) {
-            ledPattern = 3; // warning pattern
+            ledPattern = 3;
             ledPatternStart = millis();
             tone(BUZZER_PIN, 400, 500);
         }

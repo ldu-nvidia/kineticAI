@@ -311,24 +311,57 @@ class BleImuManager(private val context: Context) {
             val data = characteristic.value ?: return
             when (characteristic.uuid) {
                 IMU_CHAR_UUID -> {
-                    val sample = when (data.size) {
-                        12 -> parseImuPacketCompressed(data)
-                        24 -> parseImuPacket(data)
-                        else -> null
-                    }
-                    if (sample != null) {
-                        when (gatt.device.name) {
-                            "MyCarv-L" -> _leftImu.value = sample
-                            "MyCarv-R" -> _rightImu.value = sample
+                    when (data.size) {
+                        34 -> {
+                            // Merged Motion Packet: IMU(12) + Dual(10) + Tri(12)
+                            val sample = parseImuPacketCompressed(data.copyOfRange(0, 12))
+                            val dual = DualImuData.parse(data.copyOfRange(12, 22))
+                            val tri = TriSegmentData.parse(data.copyOfRange(22, 34))
+                            val name = gatt.device.name
+                            if (name == "MyCarv-L") {
+                                _leftImu.value = sample
+                                if (dual != null) _leftDualImu.value = dual
+                                if (tri != null) _leftTriSegment.value = tri
+                            } else if (name == "MyCarv-R") {
+                                _rightImu.value = sample
+                                if (dual != null) _rightDualImu.value = dual
+                                if (tri != null) _rightTriSegment.value = tri
+                            }
+                        }
+                        12 -> {
+                            val sample = parseImuPacketCompressed(data)
+                            when (gatt.device.name) {
+                                "MyCarv-L" -> _leftImu.value = sample
+                                "MyCarv-R" -> _rightImu.value = sample
+                            }
+                        }
+                        24 -> {
+                            val sample = parseImuPacket(data)
+                            when (gatt.device.name) {
+                                "MyCarv-L" -> _leftImu.value = sample
+                                "MyCarv-R" -> _rightImu.value = sample
+                            }
                         }
                     }
                 }
                 MIC_CHAR_UUID -> {
-                    val mic = MicData.parse(data)
-                    if (mic != null) {
-                        when (gatt.device.name) {
-                            "MyCarv-L" -> _leftMic.value = mic
-                            "MyCarv-R" -> _rightMic.value = mic
+                    if (data.size >= 18) {
+                        // Merged Environment Packet: Mic(6) + Thermal(12)
+                        val mic = MicData.parse(data.copyOfRange(0, 6))
+                        val therm = ThermalVisionData.parse(data.copyOfRange(6, 18))
+                        val name = gatt.device.name
+                        if (mic != null) {
+                            if (name == "MyCarv-L") _leftMic.value = mic
+                            else _rightMic.value = mic
+                        }
+                        if (therm != null) _thermal.value = therm
+                    } else if (data.size >= 6) {
+                        val mic = MicData.parse(data)
+                        if (mic != null) {
+                            when (gatt.device.name) {
+                                "MyCarv-L" -> _leftMic.value = mic
+                                "MyCarv-R" -> _rightMic.value = mic
+                            }
                         }
                     }
                 }
