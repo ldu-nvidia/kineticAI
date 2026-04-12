@@ -558,7 +558,10 @@ void packThermalGrid(uint8_t* out) {
 // ── Unified Init ──
 
 void initExternalSensors() {
-    Wire1.begin(21, 22, 400000);
+    // External sensors connect via the Grove port: SDA=G32, SCL=G33
+    // The internal I2C bus (G21/G22) is used by the built-in MPU6886 + RTC
+    // We use Wire1 as a second I2C bus on the Grove pins
+    Wire1.begin(32, 33, 400000);
 
     initLSM9DS1();
     initBNO055();
