@@ -17,6 +17,9 @@ import com.kineticai.app.analysis.FeedbackGenerator
 import com.kineticai.app.analysis.RunLiftDetector
 import com.kineticai.app.analysis.SkiAnalysisEngine
 import com.kineticai.app.analysis.SkiMetrics
+import com.kineticai.app.snowboard.SportMode
+import com.kineticai.app.xcski.XCSkiAnalysisEngine
+import com.kineticai.app.xcski.XCSkiMetrics
 import com.kineticai.app.data.repository.RunRepository
 import com.kineticai.app.sensor.BleCustomizer
 import com.kineticai.app.sensor.BleImuManager
@@ -47,7 +50,9 @@ class SkiTrackingService : Service() {
     private lateinit var bleImuManager: BleImuManager
     private var bleCustomizer: BleCustomizer? = null
     private val engine = SkiAnalysisEngine(sampleRateHz = 50f)
+    private val xcEngine = XCSkiAnalysisEngine(sampleRateHz = 50f)
     private val runLiftDetector = RunLiftDetector()
+    var sportMode: SportMode = SportMode.SKI
 
     private val sensorBuffer = mutableListOf<Pair<ImuSample, LocationSample?>>()
     private var lastLocation: LocationSample? = null
@@ -55,6 +60,9 @@ class SkiTrackingService : Service() {
 
     private val _metrics = MutableStateFlow(SkiMetrics())
     val metrics: StateFlow<SkiMetrics> = _metrics
+
+    private val _xcMetrics = MutableStateFlow(XCSkiMetrics())
+    val xcMetrics: StateFlow<XCSkiMetrics> = _xcMetrics
 
     private val _rawImu = MutableStateFlow<ImuSample?>(null)
     val rawImu: StateFlow<ImuSample?> = _rawImu
@@ -148,6 +156,7 @@ class SkiTrackingService : Service() {
         if (_isTracking.value) return
 
         engine.reset()
+        xcEngine.reset()
         runLiftDetector.reset()
         sensorBuffer.clear()
         trajectoryBuffer.clear()
@@ -172,6 +181,10 @@ class SkiTrackingService : Service() {
                 sensorCollector.stream().collect { sample ->
                     _rawImu.value = sample
 
+                    if (sportMode == SportMode.CROSS_COUNTRY) {
+                        xcEngine.processImu(sample)
+                        _xcMetrics.value = xcEngine.getMetrics()
+                    }
                     val turn = engine.processImu(sample)
                     sensorBuffer.add(sample to lastLocation)
 
@@ -197,6 +210,10 @@ class SkiTrackingService : Service() {
                     trajectoryBuffer.add(loc)
                     _trajectoryPoints.value = trajectoryBuffer.toList()
                     engine.processLocation(loc)
+                    if (sportMode == SportMode.CROSS_COUNTRY) {
+                        xcEngine.processLocation(loc)
+                        _xcMetrics.value = xcEngine.getMetrics()
+                    }
                     runLiftDetector.processLocation(loc)
                     _skiState.value = runLiftDetector.state
                 }

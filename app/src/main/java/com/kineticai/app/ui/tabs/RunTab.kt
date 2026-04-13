@@ -152,7 +152,7 @@ private fun RunHome(onStartRun: () -> Unit) {
         )
 
         Text(
-            text = "Your AI Ski Coach",
+            text = "AI-Powered Motion Intelligence",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -170,7 +170,7 @@ private fun RunHome(onStartRun: () -> Unit) {
         ) {
             Icon(Icons.Filled.PlayArrow, null, modifier = Modifier.size(32.dp))
             Text(
-                text = "Start Free Run",
+                text = "Start Free Session",
                 fontSize = 22.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(start = 10.dp),
@@ -219,12 +219,12 @@ private fun RunHome(onStartRun: () -> Unit) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Text(
-                        text = "Ready to ski?",
+                        text = "Ready to go?",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "Hit Start Free Run to begin tracking",
+                        text = "Hit Start to begin tracking your session",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp),
