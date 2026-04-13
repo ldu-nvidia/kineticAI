@@ -1,7 +1,7 @@
-# MyCarv — Deep Research: Ski Metrics, IMU Algorithms, and Technique Analysis
+# KineticAI — Deep Research: Ski Metrics, IMU Algorithms, and Technique Analysis
 
 ## Table of Contents
-1. [Carv Product Feature Map](#1-carv-product-feature-map)
+1. [KineticAI Product Feature Map](#1-product-feature-map)
 2. [The 12 Technique Metrics (4 Skill Categories)](#2-the-12-technique-metrics)
 3. [IMU-to-Insight Pipeline](#3-imu-to-insight-pipeline)
 4. [Sensor Fusion: Madgwick AHRS Filter](#4-sensor-fusion-madgwick-ahrs-filter)
@@ -11,19 +11,19 @@
 8. [G-Force Measurement](#8-g-force-measurement)
 9. [Balance & Weight Transfer](#9-balance--weight-transfer)
 10. [Run vs Lift Auto-Detection](#10-run-vs-lift-auto-detection)
-11. [Ski:IQ Composite Scoring](#11-skiiq-composite-scoring)
+11. [Kinetic Score Composite Scoring](#11-skiiq-composite-scoring)
 12. [Phone-Based Adaptations](#12-phone-based-adaptations)
 13. [References](#13-references)
 
 ---
 
-## 1. Carv Product Feature Map
+## 1. KineticAI Product Feature Map
 
 ### Hardware
-- **Carv 2** (current): Clip-on device with 6-axis IMU (3-axis accelerometer + 3-axis gyroscope). No pressure insole.
-- **Carv 1** (legacy): 3mm insole with 36 pressure sensors per foot + 6-axis IMU.
+- **KineticAI 2** (current): Clip-on device with 6-axis IMU (3-axis accelerometer + 3-axis gyroscope). No pressure insole.
+- **KineticAI 1** (legacy): 3mm insole with 36 pressure sensors per foot + 6-axis IMU.
 - Bluetooth LE streaming to phone at 20 Hz effective analysis rate.
-- Carv 2 proved that **motion sensors alone** can derive all metrics previously requiring pressure data, via "sensor fusion" and ML models trained on 1B+ turns.
+- KineticAI 2 proved that **motion sensors alone** can derive all metrics previously requiring pressure data, via "sensor fusion" and ML models trained on 1B+ turns.
 
 ### Feature Set
 | Category | Features |
@@ -31,7 +31,7 @@
 | **Real-time** | Turn-by-turn audio coaching, active coach mode with pings, terrain-adaptive tips |
 | **Monitoring** | Live metric monitors (edge angle, G-force, early edging per turn) |
 | **Post-run** | 12 metrics scored per run, average turn graphs, heatmaps, best-8-turns |
-| **Scoring** | Ski:IQ (0–200 composite), per-metric scores (0–100) |
+| **Scoring** | Kinetic Score (0–200 composite), per-metric scores (0–100) |
 | **Detection** | Auto turn start/end, terrain classification (groomer/bumps/powder), run/lift detection |
 | **Coaching** | Personalized pathways (carving, parallel, moguls, powder), chairlift tips, focus skill |
 | **Social** | Friends tracking, leaderboards, Strava integration |
@@ -45,7 +45,7 @@
 
 ## 2. The 12 Technique Metrics
 
-Carv organizes metrics into the 4 fundamental skiing skills (PSIA/CSIA framework):
+KineticAI organizes metrics into the 4 fundamental skiing skills (PSIA/CSIA framework):
 
 ### BALANCE (Sagittal/Frontal/Transverse planes)
 | Metric | What It Measures | How Derived from IMU |
@@ -104,7 +104,7 @@ Raw IMU (accel_xyz, gyro_xyz) @ 50-200 Hz
     ├─ [6] Turn Quality Scoring (each metric → 0-100 score)
     │       └─ Normalized against reference distributions from training data
     │
-    ├─ [7] Ski:IQ Computation (weighted combination of 12 metric scores)
+    ├─ [7] Kinetic Score Computation (weighted combination of 12 metric scores)
     │
     └─ [8] Feedback Generation
             └─ Identify weakest metric → select coaching tip → deliver audio/visual
@@ -242,7 +242,7 @@ Turn Progress:  0%          25%         50%         75%        100%
 
 ### Isolation of Centripetal (Lateral) Acceleration
 
-The key insight from Carv's engineering team: G-force in skiing is specifically the **lateral centripetal acceleration**, not raw total acceleration.
+The key insight from KineticAI's engineering team: G-force in skiing is specifically the **lateral centripetal acceleration**, not raw total acceleration.
 
 ```
 1. Get orientation quaternion from Madgwick filter
@@ -334,11 +334,11 @@ Transitions:
 
 ---
 
-## 11. Ski:IQ Composite Scoring
+## 11. Kinetic Score Composite Scoring
 
 ### Formula
 ```
-Ski:IQ = Σ(wi × metric_score_i) for i in 1..12
+Kinetic Score = Σ(wi × metric_score_i) for i in 1..12
 
 Where wi are learned weights (from ML model trained on expert-labeled data)
 ```
@@ -348,7 +348,7 @@ Each raw metric is mapped to a 0–100 score via percentile ranking against a re
 
 ### Composite Scale
 ```
-Ski:IQ range: 0–200
+Kinetic Score range: 0–200
   <90:    Beginner
   90–115: Intermediate
   115–140: Advanced
@@ -356,8 +356,8 @@ Ski:IQ range: 0–200
   160+:   Professional (Ted Ligety scored 168)
 ```
 
-### Our Implementation (MyCarv)
-Without Carv's 1B-turn training dataset, we use a physics-informed scoring model:
+### Our Implementation (KineticAI)
+Without KineticAI's 1B-turn training dataset, we use a physics-informed scoring model:
 - Weight metrics by importance (edging metrics get higher weight than pressure metrics for beginners)
 - Use percentile normalization against accumulated personal history
 - The scoring improves over time as the user builds their own reference distribution
@@ -397,10 +397,10 @@ A phone in a chest pocket or thigh strap differs from a boot-mounted sensor:
 6. "Development and Evaluation of a Low-Drift Inertial Sensor-Based System for Analysis of Alpine Skiing Performance." *Sensors* 21, 2021.
 7. "Classification of Alpine Skiing Styles Using GNSS and IMUs." *Sensors* 20(15), 2020.
 8. "A Comprehensive Comparison and Validation of Published Methods to Detect Turn Switch During Alpine Skiing." *Sensors* 21(7), 2021.
-9. Carv Blog: "How Carv Turns Your Skiing Into Data" (getcarv.com)
-10. Carv Blog: "G-Force: Our Latest Metric" (getcarv.com)
-11. Carv Blog: "Early Edging with Carv" (getcarv.com)
-12. Carv Blog: "Introducing Mid-Turn Edge Build" (getcarv.com)
-13. Carv Blog: "Introducing: Transition Weight Release" (getcarv.com)
-14. Carv Blog: "Ski:IQ" (getcarv.com)
+9. Carv Blog: "How Carv Turns Your Skiing Into Data" (getcarv.com) — reference only
+10. Carv Blog: "G-Force: Our Latest Metric" (getcarv.com) — reference only
+11. Carv Blog: "Early Edging" (getcarv.com) — reference only
+12. Carv Blog: "Introducing Mid-Turn Edge Build" (getcarv.com) — reference only
+13. Carv Blog: "Introducing: Transition Weight Release" (getcarv.com) — reference only
+14. Carv Blog: "Ski:IQ" (getcarv.com) — reference only
 15. PSIA/CSIA: "The 5 Skills Framework" — Balance, Edging, Rotary, Pressure, Timing

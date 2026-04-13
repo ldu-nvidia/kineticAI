@@ -1,4 +1,4 @@
-# MyCarv Boot IMU Firmware
+# KineticAI Boot IMU Firmware
 
 Arduino firmware for M5StickC Plus2 boot sensors.
 
@@ -30,7 +30,7 @@ Arduino firmware for M5StickC Plus2 boot sensors.
 ## Flashing
 
 ### Left boot:
-1. Open `MyCarv_IMU/MyCarv_IMU.ino`
+1. Open `KineticAI_IMU/KineticAI_IMU.ino`
 2. Ensure line 34 reads: `#define BOOT_SIDE 'L'`
 3. Optionally update WiFi credentials on lines 38-39
 4. Connect via USB-C, click Upload
@@ -43,8 +43,8 @@ Arduino firmware for M5StickC Plus2 boot sensors.
 
 Set your phone hotspot name and password on these lines:
 ```cpp
-#define WIFI_SSID "MyCarv-Hotspot"
-#define WIFI_PASS "mycarv2026"
+#define WIFI_SSID "KineticAI-Hotspot"
+#define WIFI_PASS "kineticai2026"
 ```
 
 On your Galaxy S26 Ultra, create a WiFi hotspot with matching credentials.
@@ -61,7 +61,7 @@ On your Galaxy S26 Ultra, create a WiFi hotspot with matching credentials.
 
 | UUID | Type | Description |
 |------|------|-------------|
-| `4d430001-...` | Service | MyCarv IMU Service |
+| `4d430001-...` | Service | KineticAI IMU Service |
 | `4d430002-...` | Notify | 24 bytes: 6 × float32 at 50 Hz |
 | `4d430003-...` | Read | 1 byte: 'L' or 'R' |
 | `4d430004-...` | Write | Commands: 0x01=start rec, 0x02=stop rec, 0x03=clear |

@@ -20,5 +20,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "MyCarv"
+rootProject.name = "KineticAI"
 include(":app")

@@ -24,19 +24,19 @@
     <uses-feature android:name="android.hardware.location.gps" android:required="true" />
 
     <application
-        android:name=".MyCarvApp"
+        android:name=".KineticAIApp"
         android:allowBackup="true"
         android:usesCleartextTraffic="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.MyCarv"
+        android:theme="@style/Theme.KineticAI"
         tools:targetApi="35">
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.MyCarv"
+            android:theme="@style/Theme.KineticAI"
             android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

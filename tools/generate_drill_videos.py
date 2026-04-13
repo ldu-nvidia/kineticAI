@@ -329,7 +329,7 @@ def main():
         print("  export GCP_PROJECT=your-project-id")
         return
 
-    print(f"=== MyCarv Drill Video Generator ===")
+    print(f"=== KineticAI Drill Video Generator ===")
     print(f"Model: Veo 3.1 ({MODEL})")
     print(f"Project: {PROJECT_ID}")
     print(f"Drills: {len(ALL_DRILLS)} ({len(SKI_DRILLS)} ski + {len(SNOWBOARD_DRILLS)} snowboard)")

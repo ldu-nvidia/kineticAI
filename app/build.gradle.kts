@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.mycarv.app"
+    namespace = "com.kineticai.app"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.mycarv.app"
+        applicationId = "com.kineticai.app"
         minSdk = 29
         targetSdk = 35
         versionCode = 1
