@@ -98,7 +98,7 @@ fun MoreTab(
 
         SettingsSection("About") {
             SettingsRow(Icons.Filled.Science, "Research", "Deep-dive: IMU algorithms, Madgwick filter, biomechanics") {}
-            SettingsRow(Icons.Filled.Code, "GitHub", "github.com/ldu-nvidia/kineticai-sports") {}
+            SettingsRow(Icons.Filled.Code, "GitHub", "github.com/ldu-nvidia/kineticAI") {}
             SettingsRow(Icons.Filled.Info, "Version", "KineticAI 2.0.0") {}
         }
 
