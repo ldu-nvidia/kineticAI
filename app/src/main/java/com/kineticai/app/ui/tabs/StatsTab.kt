@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -35,7 +36,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.kineticai.app.data.db.RunEntity
+import com.kineticai.app.network.AiCoachService
 import com.kineticai.app.ui.components.MetricCard
+import com.kineticai.app.ui.screens.AiChatScreen
 import com.kineticai.app.ui.screens.MetricDetailScreen
 import com.kineticai.app.ui.screens.PostAnalysisScreen
 import com.kineticai.app.ui.theme.AccentGreen
@@ -64,6 +67,16 @@ fun StatsTab(modifier: Modifier = Modifier) {
             StatsHome(
                 onMetricClick = { metric -> navController.navigate("metric/$metric") },
                 onRunClick = { runId -> navController.navigate("run_detail/$runId") },
+                onAiChat = { navController.navigate("ai_chat") },
+            )
+        }
+
+        composable("ai_chat") {
+            val aiService = remember { AiCoachService() }
+            AiChatScreen(
+                aiCoachService = aiService,
+                sessionContext = "No session loaded — user is browsing historical data.",
+                onBack = { navController.popBackStack() },
             )
         }
 
@@ -100,6 +113,7 @@ fun StatsTab(modifier: Modifier = Modifier) {
 private fun StatsHome(
     onMetricClick: (String) -> Unit,
     onRunClick: (Long) -> Unit,
+    onAiChat: () -> Unit = {},
 ) {
     val dashVm: DashboardViewModel = viewModel()
     val histVm: RunHistoryViewModel = viewModel()
@@ -117,11 +131,36 @@ private fun StatsHome(
         item {
             Spacer(modifier = Modifier.height(24.dp))
             Text(
-                text = "Season Stats",
+                text = "Insights",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
             )
             Spacer(modifier = Modifier.height(4.dp))
+        }
+
+        item {
+            Card(
+                onClick = onAiChat,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = SkyBlue.copy(alpha = 0.12f)),
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("✨", fontSize = 24.sp)
+                    Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
+                        Text("Ask AI Coach", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Chat about your technique, get personalized advice",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Icon(Icons.Filled.ChevronRight, null, tint = SkyBlue)
+                }
+            }
         }
 
         item {
