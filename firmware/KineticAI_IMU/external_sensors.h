@@ -12,6 +12,12 @@
 #include <Wire.h>
 #include <math.h>
 
+// M5Stack's esp32 core 2.1.4 ships Wire.h but the globals aren't being
+// auto-discovered by arduino-cli here; redeclare them explicitly. Harmless
+// redeclarations if the core DOES provide them.
+extern TwoWire Wire;
+extern TwoWire Wire1;
+
 // ── LSM9DS1 Registers ──
 #define LSM9DS1_AG_ADDR   0x6B
 #define LSM9DS1_MAG_ADDR  0x1E

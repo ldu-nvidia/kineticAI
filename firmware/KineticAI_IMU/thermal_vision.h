@@ -182,7 +182,7 @@ void drawThermalHeatmap(int startX, int startY, int pixelSize) {
         for (int c = 0; c < 8; c++) {
             int x = startX + c * pixelSize;
             int y = startY + r * pixelSize;
-            StickCP2.Display.fillRect(x, y, pixelSize, pixelSize,
+            M5.Display.fillRect(x, y, pixelSize, pixelSize,
                 thermalAnalysis.heatmapColors[r][c]);
         }
     }
@@ -191,8 +191,8 @@ void drawThermalHeatmap(int startX, int startY, int pixelSize) {
     if (thermalAnalysis.personBehind) {
         float cx = startX + (thermalData.hotCenterX + 3.5f) * pixelSize;
         float cy = startY + (thermalData.hotCenterY + 3.5f) * pixelSize;
-        StickCP2.Display.drawLine(cx - 6, cy, cx + 6, cy, TFT_WHITE);
-        StickCP2.Display.drawLine(cx, cy - 6, cx, cy + 6, TFT_WHITE);
+        M5.Display.drawLine(cx - 6, cy, cx + 6, cy, TFT_WHITE);
+        M5.Display.drawLine(cx, cy - 6, cx, cy + 6, TFT_WHITE);
     }
 }
 

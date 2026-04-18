@@ -17,7 +17,7 @@
  */
 
 #pragma once
-#include <M5StickCPlus2.h>
+#include <M5Unified.h>
 
 // ── Turn Quality Tracking ──
 
@@ -72,6 +72,12 @@ static bool inFlash = false;
 // ── Party mode ──
 static bool partyMode = false;
 static uint8_t partyHue = 0;
+
+// Forward declarations (definitions appear later in this file)
+uint16_t colorFromHue(uint8_t hue);
+
+// Provided by main sketch (direct AXP192 I2C read — avoids ADC driver conflict)
+float readBatteryVoltageAxp();
 
 // ── Light pattern state ──
 static unsigned long ledPatternStart = 0;
@@ -178,26 +184,26 @@ bool drawFlashIfActive() {
         return false;
     }
 
-    StickCP2.Display.fillScreen(flashColor);
+    M5.Display.fillScreen(flashColor);
 
     // Large emoji in center
-    StickCP2.Display.setTextSize(4);
-    StickCP2.Display.setTextColor(BLACK);
-    StickCP2.Display.setCursor(30, 20);
-    StickCP2.Display.printf("%s", qualityEmoji(ts.quality));
+    M5.Display.setTextSize(4);
+    M5.Display.setTextColor(BLACK);
+    M5.Display.setCursor(30, 20);
+    M5.Display.printf("%s", qualityEmoji(ts.quality));
 
     // Edge angle big
-    StickCP2.Display.setTextSize(3);
-    StickCP2.Display.setCursor(30, 70);
-    StickCP2.Display.printf("%2.0f", ts.lastEdgeAngle);
-    StickCP2.Display.setTextSize(1);
-    StickCP2.Display.printf("deg");
+    M5.Display.setTextSize(3);
+    M5.Display.setCursor(30, 70);
+    M5.Display.printf("%2.0f", ts.lastEdgeAngle);
+    M5.Display.setTextSize(1);
+    M5.Display.printf("deg");
 
     // Streak
     if (ts.streak >= 3) {
-        StickCP2.Display.setTextSize(2);
-        StickCP2.Display.setCursor(30, 105);
-        StickCP2.Display.printf("x%d STREAK!", ts.streak);
+        M5.Display.setTextSize(2);
+        M5.Display.setCursor(30, 105);
+        M5.Display.printf("x%d STREAK!", ts.streak);
     }
 
     return true;
@@ -214,26 +220,26 @@ void drawLiveScreen(float* packet, bool bleConn, uint32_t recCount) {
     extern ProximityResult proxResult;
     if (proxResult.level >= PROX_WARNING) {
         uint16_t bgCol = proximityLevelColor(proxResult.level);
-        StickCP2.Display.fillScreen(bgCol);
-        StickCP2.Display.setTextSize(3);
-        StickCP2.Display.setTextColor(BLACK);
-        StickCP2.Display.setCursor(10, 20);
-        StickCP2.Display.printf("%s", proximityLevelStr(proxResult.level));
-        StickCP2.Display.setTextSize(4);
-        StickCP2.Display.setCursor(10, 60);
-        StickCP2.Display.printf("%.1fm", proxResult.distanceCm / 100.0f);
-        StickCP2.Display.setTextSize(2);
-        StickCP2.Display.setCursor(10, 105);
-        StickCP2.Display.printf("%.0f cm/s", proxResult.closingSpeedCmPerS);
+        M5.Display.fillScreen(bgCol);
+        M5.Display.setTextSize(3);
+        M5.Display.setTextColor(BLACK);
+        M5.Display.setCursor(10, 20);
+        M5.Display.printf("%s", proximityLevelStr(proxResult.level));
+        M5.Display.setTextSize(4);
+        M5.Display.setCursor(10, 60);
+        M5.Display.printf("%.1fm", proxResult.distanceCm / 100.0f);
+        M5.Display.setTextSize(2);
+        M5.Display.setCursor(10, 105);
+        M5.Display.printf("%.0f cm/s", proxResult.closingSpeedCmPerS);
         return;
     }
 
     // Party mode: cycling background
     if (partyMode) {
         uint16_t bg = colorFromHue(partyHue++);
-        StickCP2.Display.fillScreen(bg);
+        M5.Display.fillScreen(bg);
     } else {
-        StickCP2.Display.fillScreen(COL_BG);
+        M5.Display.fillScreen(COL_BG);
     }
 
     float edgeAngle = fabsf(atan2f(packet[0],
@@ -245,109 +251,109 @@ void drawLiveScreen(float* packet, bool bleConn, uint32_t recCount) {
     int y = 2;
 
     // ── Row 1: Side + Status + Battery ──
-    StickCP2.Display.setTextSize(2);
-    StickCP2.Display.setTextColor(bleConn ? TFT_GREEN : TFT_CYAN);
-    StickCP2.Display.setCursor(5, y);
-    StickCP2.Display.printf("%c", BOOT_SIDE);
+    M5.Display.setTextSize(2);
+    M5.Display.setTextColor(bleConn ? TFT_GREEN : TFT_CYAN);
+    M5.Display.setCursor(5, y);
+    M5.Display.printf("%c", BOOT_SIDE);
 
     // Connection dot
-    StickCP2.Display.fillCircle(30, y + 7, 5, bleConn ? TFT_GREEN : TFT_RED);
+    M5.Display.fillCircle(30, y + 7, 5, bleConn ? TFT_GREEN : TFT_RED);
 
     // Last turn emoji
     if (ts.count > 0) {
-        StickCP2.Display.setTextColor(qualityColor(ts.quality));
-        StickCP2.Display.setCursor(80, y);
-        StickCP2.Display.printf("%s", qualityEmoji(ts.quality));
+        M5.Display.setTextColor(qualityColor(ts.quality));
+        M5.Display.setCursor(80, y);
+        M5.Display.printf("%s", qualityEmoji(ts.quality));
     }
 
     // Battery
-    float batV = StickCP2.Power.getBatteryVoltage() / 1000.0f;
+    float batV = readBatteryVoltageAxp();
     int batPct = constrain((int)((batV - 3.2f) / 0.9f * 100), 0, 100);
-    StickCP2.Display.setTextSize(1);
-    StickCP2.Display.setTextColor(batPct > 20 ? TFT_GREEN : TFT_RED);
-    StickCP2.Display.setCursor(190, y + 2);
-    StickCP2.Display.printf("%d%%", batPct);
+    M5.Display.setTextSize(1);
+    M5.Display.setTextColor(batPct > 20 ? TFT_GREEN : TFT_RED);
+    M5.Display.setCursor(190, y + 2);
+    M5.Display.printf("%d%%", batPct);
 
     // Recording indicator
     if (recCount > 0) {
-        StickCP2.Display.fillCircle(180, y + 5, 3, TFT_RED);
+        M5.Display.fillCircle(180, y + 5, 3, TFT_RED);
     }
 
     y += 22;
 
     // ── Row 2: EDGE ANGLE (big, with color) ──
     uint16_t edgeCol = qualityColor(classifyTurn(edgeAngle, gForce));
-    StickCP2.Display.setTextSize(4);
-    StickCP2.Display.setTextColor(edgeCol);
-    StickCP2.Display.setCursor(5, y);
-    StickCP2.Display.printf("%4.1f", edgeAngle);
-    StickCP2.Display.setTextSize(1);
-    StickCP2.Display.setTextColor(TFT_WHITE);
-    StickCP2.Display.setCursor(140, y + 5);
-    StickCP2.Display.printf("EDGE");
-    StickCP2.Display.setCursor(140, y + 18);
-    StickCP2.Display.printf("deg");
+    M5.Display.setTextSize(4);
+    M5.Display.setTextColor(edgeCol);
+    M5.Display.setCursor(5, y);
+    M5.Display.printf("%4.1f", edgeAngle);
+    M5.Display.setTextSize(1);
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.setCursor(140, y + 5);
+    M5.Display.printf("EDGE");
+    M5.Display.setCursor(140, y + 18);
+    M5.Display.printf("deg");
 
     // Edge angle bar (horizontal, fills from left)
     y += 35;
     int barW = (int)(edgeAngle / 60.0f * 200);
     if (barW > 200) barW = 200;
-    StickCP2.Display.fillRect(5, y, barW, 6, edgeCol);
-    StickCP2.Display.drawRect(5, y, 200, 6, TFT_DARKGREY);
+    M5.Display.fillRect(5, y, barW, 6, edgeCol);
+    M5.Display.drawRect(5, y, 200, 6, TFT_DARKGREY);
 
     y += 12;
 
     // ── Row 3: G-Force + Fore-Aft Arrow ──
-    StickCP2.Display.setTextSize(2);
-    StickCP2.Display.setTextColor(gForce > 2.0f ? COL_FIRE : (gForce > 1.2f ? COL_GOOD : TFT_WHITE));
-    StickCP2.Display.setCursor(5, y);
-    StickCP2.Display.printf("%.1fG", gForce);
+    M5.Display.setTextSize(2);
+    M5.Display.setTextColor(gForce > 2.0f ? COL_FIRE : (gForce > 1.2f ? COL_GOOD : TFT_WHITE));
+    M5.Display.setCursor(5, y);
+    M5.Display.printf("%.1fG", gForce);
 
     // Fore-aft balance arrow
-    StickCP2.Display.setTextSize(2);
+    M5.Display.setTextSize(2);
     if (pitch > 8) {
         // Leaning back (bad)
-        StickCP2.Display.setTextColor(TFT_RED);
-        StickCP2.Display.setCursor(90, y);
-        StickCP2.Display.printf(">> FWD!");
+        M5.Display.setTextColor(TFT_RED);
+        M5.Display.setCursor(90, y);
+        M5.Display.printf(">> FWD!");
     } else if (pitch < -8) {
         // Leaning too far forward
-        StickCP2.Display.setTextColor(COL_OK);
-        StickCP2.Display.setCursor(90, y);
-        StickCP2.Display.printf("<< BACK");
+        M5.Display.setTextColor(COL_OK);
+        M5.Display.setCursor(90, y);
+        M5.Display.printf("<< BACK");
     } else {
         // Centered (good)
-        StickCP2.Display.setTextColor(TFT_GREEN);
-        StickCP2.Display.setCursor(90, y);
-        StickCP2.Display.printf("CENTERED");
+        M5.Display.setTextColor(TFT_GREEN);
+        M5.Display.setCursor(90, y);
+        M5.Display.printf("CENTERED");
     }
 
     y += 22;
 
     // ── Row 4: Turn Count + Streak + Rhythm ──
-    StickCP2.Display.setTextSize(2);
-    StickCP2.Display.setTextColor(TFT_YELLOW);
-    StickCP2.Display.setCursor(5, y);
-    StickCP2.Display.printf("T:%lu", ts.count);
+    M5.Display.setTextSize(2);
+    M5.Display.setTextColor(TFT_YELLOW);
+    M5.Display.setCursor(5, y);
+    M5.Display.printf("T:%lu", ts.count);
 
     if (ts.streak >= 3) {
-        StickCP2.Display.setTextColor(COL_EPIC);
-        StickCP2.Display.printf(" x%d", ts.streak);
+        M5.Display.setTextColor(COL_EPIC);
+        M5.Display.printf(" x%d", ts.streak);
     }
 
     // Rhythm dots (last 6 turns' consistency)
     if (ts.rhythmScore > 0) {
         int rx = 160;
-        StickCP2.Display.setTextSize(1);
-        StickCP2.Display.setTextColor(TFT_WHITE);
-        StickCP2.Display.setCursor(rx, y + 2);
-        StickCP2.Display.printf("R:");
+        M5.Display.setTextSize(1);
+        M5.Display.setTextColor(TFT_WHITE);
+        M5.Display.setCursor(rx, y + 2);
+        M5.Display.printf("R:");
         // Draw rhythm as small colored squares
         uint16_t rCol = ts.rhythmScore > 70 ? TFT_GREEN :
                         (ts.rhythmScore > 40 ? COL_OK : TFT_RED);
         int rBarW = (int)(ts.rhythmScore / 100.0f * 30);
-        StickCP2.Display.fillRect(rx + 15, y + 4, rBarW, 8, rCol);
-        StickCP2.Display.drawRect(rx + 15, y + 4, 30, 8, TFT_DARKGREY);
+        M5.Display.fillRect(rx + 15, y + 4, rBarW, 8, rCol);
+        M5.Display.drawRect(rx + 15, y + 4, 30, 8, TFT_DARKGREY);
     }
 
     y += 22;
@@ -361,47 +367,47 @@ void drawLiveScreen(float* packet, bool bleConn, uint32_t recCount) {
         if (runQuality > 100) runQuality = 100;
     }
 
-    StickCP2.Display.setTextSize(1);
-    StickCP2.Display.setTextColor(TFT_WHITE);
-    StickCP2.Display.setCursor(5, y);
-    StickCP2.Display.printf("RUN ");
+    M5.Display.setTextSize(1);
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.setCursor(5, y);
+    M5.Display.printf("RUN ");
 
     uint16_t rqCol = runQuality > 70 ? COL_GREAT :
                      (runQuality > 40 ? COL_OK : COL_BAD);
     int rqW = (int)(runQuality / 100.0f * 150);
-    StickCP2.Display.fillRect(35, y, rqW, 10, rqCol);
-    StickCP2.Display.drawRect(35, y, 150, 10, TFT_DARKGREY);
+    M5.Display.fillRect(35, y, rqW, 10, rqCol);
+    M5.Display.drawRect(35, y, 150, 10, TFT_DARKGREY);
 
-    StickCP2.Display.setCursor(190, y);
-    StickCP2.Display.printf("%d", (int)runQuality);
+    M5.Display.setCursor(190, y);
+    M5.Display.printf("%d", (int)runQuality);
 
     y += 16;
 
     // ── Row 6: Snow Type + Carve Quality (from mic) ──
-    StickCP2.Display.setTextSize(1);
+    M5.Display.setTextSize(1);
     // These reference extern from mic_analysis.h
     extern MicAnalysisResult micResult;
 
     if (micResult.snowType != SNOW_UNKNOWN) {
-        StickCP2.Display.setTextColor(snowTypeColor(micResult.snowType));
-        StickCP2.Display.setCursor(5, y);
-        StickCP2.Display.printf("%s", snowTypeStr(micResult.snowType));
+        M5.Display.setTextColor(snowTypeColor(micResult.snowType));
+        M5.Display.setCursor(5, y);
+        M5.Display.printf("%s", snowTypeStr(micResult.snowType));
 
-        StickCP2.Display.setTextColor(carveQualityColor(micResult.carveQuality));
-        StickCP2.Display.setCursor(90, y);
-        StickCP2.Display.printf("%s", carveQualityStr(micResult.carveQuality));
+        M5.Display.setTextColor(carveQualityColor(micResult.carveQuality));
+        M5.Display.setCursor(90, y);
+        M5.Display.printf("%s", carveQualityStr(micResult.carveQuality));
     } else if (ts.streak >= 5) {
-        StickCP2.Display.setTextColor(COL_EPIC);
-        StickCP2.Display.setCursor(5, y);
-        StickCP2.Display.printf("x%d STREAK!", ts.streak);
+        M5.Display.setTextColor(COL_EPIC);
+        M5.Display.setCursor(5, y);
+        M5.Display.printf("x%d STREAK!", ts.streak);
     } else if (ts.count > 0 && ts.quality >= 3) {
-        StickCP2.Display.setTextColor(COL_GREAT);
-        StickCP2.Display.setCursor(5, y);
-        StickCP2.Display.printf("Crushing it!");
+        M5.Display.setTextColor(COL_GREAT);
+        M5.Display.setCursor(5, y);
+        M5.Display.printf("Crushing it!");
     } else {
-        StickCP2.Display.setTextColor(TFT_DARKGREY);
-        StickCP2.Display.setCursor(5, y);
-        StickCP2.Display.printf("BtnA:WiFi BtnB:Mark");
+        M5.Display.setTextColor(TFT_DARKGREY);
+        M5.Display.setCursor(5, y);
+        M5.Display.printf("BtnA:WiFi BtnB:Mark");
     }
 }
 

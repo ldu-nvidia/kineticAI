@@ -27,23 +27,34 @@
  *   GET /clear  → clears recorded data
  */
 
-#include <M5StickCPlus2.h>
-#include <BLEDevice.h>
-#include <BLEServer.h>
-#include <BLEUtils.h>
-#include <BLE2902.h>
-#include <WiFi.h>
-#include <WebServer.h>
+#include <M5Unified.h>
+#include <Wire.h>
+// NimBLE is ~50% smaller than Arduino's built-in Bluedroid BLE stack
+// (required to fit in the M5StickC Plus2's IRAM budget).
+#include <NimBLEDevice.h>
 #include <Preferences.h>
-#include "display.h"
-#include "custom_display.h"
-#include "mic_analysis.h"
-#include "power_manager.h"
-#include "proximity.h"
-#include "external_sensors.h"
-#include "dual_imu.h"
-#include "tri_segment.h"
-#include "thermal_vision.h"
+
+// ════════════════════════════════════════
+//  WiFi bulk-transfer mode — OPTIONAL
+// ════════════════════════════════════════
+// Set to 1 to enable post-run WiFi dump of 200 Hz recorded data over HTTP.
+// Leave at 0 for a BLE-only build (fits M5StickC Plus2's ~128KB IRAM).
+// WiFi+BT coexistence places ~40KB of extra code into IRAM; the default
+// BLE-only build is leaner and recommended while iterating on firmware.
+#define ENABLE_WIFI_TRANSFER 0
+
+#if ENABLE_WIFI_TRANSFER
+  #include <WiFi.h>
+  #include <WebServer.h>
+#endif
+
+// ════════════════════════════════════════
+//  External sensors — OPTIONAL
+// ════════════════════════════════════════
+// Set to 1 once you've wired LSM9DS1 / BNO055 / VL6180X / AMG8833 to Grove port.
+// When 0, all external-sensor code is compiled out — a bare M5StickC Plus with
+// just the built-in IMU + buttons + LCD + buzzer builds and runs cleanly.
+#define ENABLE_EXTERNAL_SENSORS 0
 
 // ════════════════════════════════════════
 //  CHANGE THIS FOR EACH BOOT: 'L' or 'R'
@@ -65,6 +76,45 @@
 #define DUAL_CHAR_UUID "4d430007-0000-1000-8000-00805f9b34fb"
 #define TRI_CHAR_UUID  "4d430008-0000-1000-8000-00805f9b34fb"
 #define THERM_CHAR_UUID "4d430009-0000-1000-8000-00805f9b34fb"
+
+// Local includes — order matters: each header's dependencies must come first
+#include "power_manager.h"      // defines PowerConfig, PowerState, currentConfig
+#include "proximity.h"          // defines ProximityResult, PROX_WARNING, etc.
+#include "mic_analysis.h"       // defines MicAnalysisResult, uses PowerConfig
+#include "display.h"            // uses all of the above + BOOT_SIDE
+#include "custom_display.h"
+#if ENABLE_EXTERNAL_SENSORS
+  #include "external_sensors.h"
+  #include "dual_imu.h"
+  #include "tri_segment.h"
+  #include "thermal_vision.h"
+#else
+  // Stub globals so the rest of the sketch compiles without external-sensor code
+  struct { bool valid = false; float accelX, accelY, accelZ, gyroX, gyroY, gyroZ, magX, magY, magZ; } extImu;
+  struct { bool valid = false; uint8_t calSys = 0; float roll = 0, pitch = 0, heading = 0, linAccelX = 0, linAccelY = 0, linAccelZ = 0; } bnoData;
+  struct { bool airborne = false; uint16_t rangeMm = 0; } distData;
+  struct { bool valid = false; bool frostbiteWarning = false; bool fusedAlert = false; } thermalAnalysis;
+  struct { bool valid = false; } thermalData;
+  struct { bool valid = false; float shellRoll = 0, shellPitch = 0, cuffRoll = 0, cuffPitch = 0; } dualMetrics;
+  struct { bool valid = false; bool aclWarning = false; } triMetrics;
+  static bool lsm9ds1Present = false;
+  static bool bno055Present = false;
+  static inline void initExternalSensors() {}
+  static inline void readLSM9DS1() {}
+  static inline void readBNO055() {}
+  static inline void readVL6180X() {}
+  static inline void readAMG8833() {}
+  static inline void updateThermalAnalysis() {}
+  static inline void packThermalAnalysis(uint8_t* out) { memset(out, 0, 12); }
+  static inline void updateDualImu(float, float, float, float, float, float,
+                                   float, float, float, float, float, float,
+                                   float, float, float, uint16_t, bool, float) {}
+  static inline void packDualImuMetrics(uint8_t* out) { memset(out, 0, 10); }
+  static inline void updateTriSegment(float, float, float, float, float, float, float,
+                                      float, float, float, float, uint8_t,
+                                      bool, bool, float) {}
+  static inline void packTriSegmentMetrics(uint8_t* out) { memset(out, 0, 12); }
+#endif
 
 // Vibration motor pin (connected to Grove port GPIO25 or GPIO26)
 #define VIBRO_PIN      25  // -1 if not connected
@@ -93,21 +143,23 @@ volatile uint32_t recordCount = 0;
 volatile bool recording = false;
 
 // BLE state
-BLEServer* pServer = nullptr;
-BLECharacteristic* pImuChar = nullptr;
-BLECharacteristic* pSideChar = nullptr;
-BLECharacteristic* pCmdChar = nullptr;
-BLECharacteristic* pMicChar = nullptr;
-BLECharacteristic* pProxChar = nullptr;
-BLECharacteristic* pDualChar = nullptr;
-BLECharacteristic* pTriChar = nullptr;
-BLECharacteristic* pThermChar = nullptr;
+NimBLEServer* pServer = nullptr;
+NimBLECharacteristic* pImuChar = nullptr;
+NimBLECharacteristic* pSideChar = nullptr;
+NimBLECharacteristic* pCmdChar = nullptr;
+NimBLECharacteristic* pMicChar = nullptr;
+NimBLECharacteristic* pProxChar = nullptr;
+NimBLECharacteristic* pDualChar = nullptr;
+NimBLECharacteristic* pTriChar = nullptr;
+NimBLECharacteristic* pThermChar = nullptr;
 bool bleConnected = false;
 bool wasConnected = false;
 
 // WiFi state
 bool wifiMode = false;
+#if ENABLE_WIFI_TRANSFER
 WebServer* webServer = nullptr;
+#endif
 
 // Timing
 unsigned long lastBleTime = 0;
@@ -127,18 +179,22 @@ uint8_t markerCount = 0;
 
 const char* deviceName = (BOOT_SIDE == 'L') ? "KineticAI-L" : "KineticAI-R";
 
+// Forward declarations (definitions appear later in this file)
+void clearRecords();
+
 // ── BLE Callbacks ──
 
-class ServerCallbacks : public BLEServerCallbacks {
-    void onConnect(BLEServer* s) override { bleConnected = true; }
-    void onDisconnect(BLEServer* s) override { bleConnected = false; }
+class ServerCallbacks : public NimBLEServerCallbacks {
+    void onConnect(NimBLEServer* s, NimBLEConnInfo& info) override { bleConnected = true; }
+    void onDisconnect(NimBLEServer* s, NimBLEConnInfo& info, int reason) override { bleConnected = false; }
 };
 
-class CmdCallback : public BLECharacteristicCallbacks {
-    void onWrite(BLECharacteristic* c) override {
+class CmdCallback : public NimBLECharacteristicCallbacks {
+    void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& info) override {
+        // NimBLE returns std::string from getValue()
         std::string val = c->getValue();
         if (val.length() > 0) {
-            uint8_t cmd = val[0];
+            uint8_t cmd = (uint8_t)val[0];
             switch (cmd) {
                 case 0x01: recording = true; break;
                 case 0x02: recording = false; break;
@@ -163,84 +219,112 @@ void clearRecords() {
 
 // ── Setup ──
 
+// ── Battery voltage (direct AXP192 I2C read) ──
+// Workaround: M5.Power uses legacy ADC API which conflicts with Arduino
+// ESP32 core 3.x driver_ng. We read the AXP192 PMIC directly over internal I2C.
+// AXP192 is at 7-bit address 0x34 on M5StickC Plus; battery voltage is a
+// 12-bit value at registers 0x78–0x79, scaled at 1.1 mV per LSB.
+float readBatteryVoltageAxp() {
+    uint8_t buf[2] = {0, 0};
+    if (!M5.In_I2C.readRegister(0x34, 0x78, buf, 2, 400000)) return 0.0f;
+    uint16_t raw = ((uint16_t)buf[0] << 4) | (buf[1] & 0x0F);
+    return raw * 0.0011f; // volts
+}
+
 void setup() {
+    Serial.begin(115200);
+    delay(200);
+    Serial.println("\n\n===== KineticAI boot =====");
+
     auto cfg = M5.config();
-    StickCP2.begin(cfg);
+    cfg.output_power = false;
+    cfg.internal_mic = false;
+    cfg.internal_spk = false;
+    Serial.println("[1] M5.begin() ...");
+    M5.begin(cfg);
+    Serial.println("[1] M5.begin() OK");
 
-    StickCP2.Display.setRotation(1);
-    StickCP2.Display.fillScreen(BLACK);
+    M5.Display.setRotation(1);
+    M5.Display.fillScreen(BLACK);
+    Serial.println("[2] Display OK");
 
-    // Allocate record buffer in PSRAM
-    recordBuffer = (ImuRecord*)ps_malloc(MAX_RECORDS * sizeof(ImuRecord));
-    if (!recordBuffer) {
-        recordBuffer = (ImuRecord*)malloc(10000 * sizeof(ImuRecord));
-    }
+    recordBuffer = (ImuRecord*)malloc(10000 * sizeof(ImuRecord));
+    Serial.printf("[3] Record buffer malloc %s\n", recordBuffer ? "OK" : "FAILED");
 
     drawStatus("Starting...", TFT_YELLOW);
+    Serial.println("[4] drawStatus OK");
 
-    // Initialize BLE
-    BLEDevice::init(deviceName);
-    pServer = BLEDevice::createServer();
+    Serial.println("[5] NimBLEDevice::init ...");
+    NimBLEDevice::init(deviceName);
+    Serial.println("[5] NimBLEDevice::init OK");
+    pServer = NimBLEDevice::createServer();
     pServer->setCallbacks(new ServerCallbacks());
 
-    BLEService* pService = pServer->createService(SERVICE_UUID);
+    NimBLEService* pService = pServer->createService(SERVICE_UUID);
 
     pImuChar = pService->createCharacteristic(
         IMU_CHAR_UUID,
-        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
+        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
     );
-    pImuChar->addDescriptor(new BLE2902());
 
     pSideChar = pService->createCharacteristic(
         SIDE_CHAR_UUID,
-        BLECharacteristic::PROPERTY_READ
+        NIMBLE_PROPERTY::READ
     );
     uint8_t sideVal = BOOT_SIDE;
     pSideChar->setValue(&sideVal, 1);
 
     pCmdChar = pService->createCharacteristic(
         CMD_CHAR_UUID,
-        BLECharacteristic::PROPERTY_WRITE
+        NIMBLE_PROPERTY::WRITE
     );
     pCmdChar->setCallbacks(new CmdCallback());
 
     pMicChar = pService->createCharacteristic(
         MIC_CHAR_UUID,
-        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
+        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
     );
-    pMicChar->addDescriptor(new BLE2902());
 
     pProxChar = pService->createCharacteristic(
         PROX_CHAR_UUID,
-        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
+        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
     );
-    pProxChar->addDescriptor(new BLE2902());
 
     pDualChar = pService->createCharacteristic(
         DUAL_CHAR_UUID,
-        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
+        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
     );
-    pDualChar->addDescriptor(new BLE2902());
 
     pTriChar = pService->createCharacteristic(
         TRI_CHAR_UUID,
-        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
+        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
     );
-    pTriChar->addDescriptor(new BLE2902());
 
     pThermChar = pService->createCharacteristic(
         THERM_CHAR_UUID,
-        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
+        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
     );
-    pThermChar->addDescriptor(new BLE2902());
 
     pService->start();
+    Serial.println("[6] Service start OK");
 
-    BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
-    pAdvertising->addServiceUUID(SERVICE_UUID);
-    pAdvertising->setScanResponse(true);
-    pAdvertising->setMinPreferred(0x06);
-    BLEDevice::startAdvertising();
+    // Advertising: name in primary packet, 128-bit service UUID in scan response.
+    // Putting both in the 31-byte primary packet would silently truncate the name
+    // and make the device show up as anonymous in BLE scanners.
+    NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
+
+    NimBLEAdvertisementData advData;
+    advData.setFlags(BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP);
+    advData.setName(deviceName);
+    pAdvertising->setAdvertisementData(advData);
+
+    NimBLEAdvertisementData scanRespData;
+    scanRespData.setCompleteServices(NimBLEUUID(SERVICE_UUID));
+    pAdvertising->setScanResponseData(scanRespData);
+
+    pAdvertising->setPreferredParams(0x06, 0x12);
+    NimBLEDevice::startAdvertising();
+    Serial.println("[7] Advertising started");
 
     startTimeMs = millis();
     recording = true;
@@ -248,28 +332,40 @@ void setup() {
     pinMode(BUZZER_PIN, OUTPUT);
     pinMode(LED_PIN, OUTPUT);
     digitalWrite(LED_PIN, LOW);
+    Serial.println("[8] GPIO init OK");
 
     customDisplayInit();
+    Serial.println("[9] customDisplayInit OK");
     micInit();
+    Serial.println("[10] micInit OK");
     proximityInit();
+    Serial.println("[11] proximityInit OK");
     initExternalSensors();
+    Serial.println("[12] initExternalSensors OK");
 
-    // Vibration motor (optional, -1 = not connected)
     if (VIBRO_PIN >= 0) {
         pinMode(VIBRO_PIN, OUTPUT);
         analogWrite(VIBRO_PIN, 0);
     }
+    Serial.println("[13] Vibro pin OK");
 
     drawStatus("Ready", TFT_GREEN);
+    Serial.println("===== setup() complete =====\n");
 }
 
 // ── Main Loop ──
 
 void loop() {
-    StickCP2.update();
+    static unsigned long lastHeartbeat = 0;
+    if (millis() - lastHeartbeat > 2000) {
+        lastHeartbeat = millis();
+        Serial.printf("[loop] alive t=%lu ms, bleConn=%d\n", millis(), bleConnected);
+    }
+
+    M5.update();
 
     // Button A: short press = WiFi mode, long hold (>2s) = party mode
-    if (StickCP2.BtnA.wasReleaseFor(2000)) {
+    if (M5.BtnA.wasReleaseFor(2000)) {
         togglePartyMode();
         if (partyMode) {
             tone(BUZZER_PIN, 1000, 50);
@@ -278,16 +374,19 @@ void loop() {
             delay(80);
             tone(BUZZER_PIN, 2000, 50);
         }
-    } else if (StickCP2.BtnA.wasPressed()) {
+    }
+#if ENABLE_WIFI_TRANSFER
+    else if (M5.BtnA.wasPressed()) {
         if (!wifiMode) {
             startWifiMode();
         } else {
             stopWifiMode();
         }
     }
+#endif
 
     // Button B: mark a moment
-    if (StickCP2.BtnB.wasPressed()) {
+    if (M5.BtnB.wasPressed()) {
         if (markerCount < MAX_MARKERS) {
             markers[markerCount++] = millis() - startTimeMs;
             // Confirmation buzz
@@ -295,15 +394,17 @@ void loop() {
         }
     }
 
+#if ENABLE_WIFI_TRANSFER
     if (wifiMode) {
         webServer->handleClient();
         return;
     }
+#endif
 
     // Handle BLE reconnection
     if (!bleConnected && wasConnected) {
         delay(200);
-        BLEDevice::startAdvertising();
+        NimBLEDevice::startAdvertising();
         wasConnected = false;
     }
     if (bleConnected && !wasConnected) {
@@ -316,8 +417,10 @@ void loop() {
 
     unsigned long now = millis();
 
-    // Read IMU
-    auto imuData = StickCP2.Imu.getImuData();
+    // Read IMU — must explicitly poll on this M5Unified+core combo;
+    // M5.update() only polls buttons, not the IMU
+    M5.Imu.update();
+    auto imuData = M5.Imu.getImuData();
 
     float packet[6];
     packet[0] = imuData.accel.x * 9.81f;
@@ -326,6 +429,15 @@ void loop() {
     packet[3] = imuData.gyro.x * 0.01745329f;
     packet[4] = imuData.gyro.y * 0.01745329f;
     packet[5] = imuData.gyro.z * 0.01745329f;
+
+    // Diagnostic: print IMU every second to confirm it's actually reading new data
+    static unsigned long lastImuPrint = 0;
+    if (millis() - lastImuPrint > 1000) {
+        lastImuPrint = millis();
+        Serial.printf("[imu] accel=(%.2f,%.2f,%.2f) gyro=(%.2f,%.2f,%.2f)\n",
+            imuData.accel.x, imuData.accel.y, imuData.accel.z,
+            imuData.gyro.x, imuData.gyro.y, imuData.gyro.z);
+    }
 
     // ── Local Recording (rate from power config) ──
     bool shouldRecord = currentConfig.recordingEnabled && recording && recordBuffer;
@@ -384,6 +496,12 @@ void loop() {
 
     float dt = currentConfig.bleIntervalMs / 1000.0f;
 
+    // ── Derived motion quantities (used by tri-segment, turn detection, displays) ──
+    float edgeAngle = fabsf(atan2f(packet[0],
+        sqrtf(packet[1]*packet[1] + packet[2]*packet[2]))) * 57.296f;
+    float gForce = sqrtf(packet[0]*packet[0] + packet[1]*packet[1] + packet[2]*packet[2]) / 9.81f;
+    float pitch = atan2f(packet[1], sqrtf(packet[0]*packet[0] + packet[2]*packet[2])) * 57.296f;
+
     // ── Dual IMU Analysis (shell + cuff) ──
     if (extImu.valid) {
         updateDualImu(
@@ -417,6 +535,12 @@ void loop() {
     // Combines IMU + DualIMU + TriSegment into one notification
     if (bleConnected && (now - lastBleTime >= currentConfig.bleIntervalMs)) {
         lastBleTime = now;
+
+        static uint32_t notifyCount = 0;
+        notifyCount++;
+        if (notifyCount % 50 == 0) {
+            Serial.printf("[ble] notify #%u sent\n", notifyCount);
+        }
 
         uint8_t motionPacket[34];
         // Bytes 0-11: Compressed IMU (6x int16)
@@ -453,11 +577,7 @@ void loop() {
     }
 
     // ── Turn Detection + Rich Feedback ──
-    float edgeAngle = fabsf(atan2f(packet[0],
-        sqrtf(packet[1]*packet[1] + packet[2]*packet[2]))) * 57.296f;
-    float gForce = sqrtf(packet[0]*packet[0] + packet[1]*packet[1] + packet[2]*packet[2]) / 9.81f;
-    float pitch = atan2f(packet[1], sqrtf(packet[0]*packet[0] + packet[2]*packet[2])) * 57.296f;
-
+    // (edgeAngle, gForce, pitch already computed above)
     bool turnDetected = false;
     if (lastGyroZ > 0.5f && packet[5] <= 0.5f) turnDetected = true;
     if (lastGyroZ < -0.5f && packet[5] >= -0.5f) turnDetected = true;
@@ -572,25 +692,26 @@ void buzzTurnFeedback(float* packet) {
 }
 
 // ── WiFi Transfer Mode ──
+#if ENABLE_WIFI_TRANSFER
 
 void startWifiMode() {
     wifiMode = true;
     recording = false;
 
     // Stop BLE to free radio for WiFi
-    BLEDevice::deinit(true);
+    NimBLEDevice::deinit(true);
 
-    StickCP2.Display.fillScreen(BLACK);
-    StickCP2.Display.setTextSize(2);
-    StickCP2.Display.setTextColor(TFT_YELLOW);
-    StickCP2.Display.setCursor(10, 10);
-    StickCP2.Display.printf("WiFi Mode");
-    StickCP2.Display.setTextSize(1);
-    StickCP2.Display.setTextColor(TFT_WHITE);
-    StickCP2.Display.setCursor(10, 40);
-    StickCP2.Display.printf("Connecting to:");
-    StickCP2.Display.setCursor(10, 55);
-    StickCP2.Display.printf("%s", WIFI_SSID);
+    M5.Display.fillScreen(BLACK);
+    M5.Display.setTextSize(2);
+    M5.Display.setTextColor(TFT_YELLOW);
+    M5.Display.setCursor(10, 10);
+    M5.Display.printf("WiFi Mode");
+    M5.Display.setTextSize(1);
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.setCursor(10, 40);
+    M5.Display.printf("Connecting to:");
+    M5.Display.setCursor(10, 55);
+    M5.Display.printf("%s", WIFI_SSID);
 
     WiFi.begin(WIFI_SSID, WIFI_PASS);
 
@@ -598,20 +719,20 @@ void startWifiMode() {
     while (WiFi.status() != WL_CONNECTED && attempts < 30) {
         delay(500);
         attempts++;
-        StickCP2.Display.setCursor(10, 75);
-        StickCP2.Display.printf("Attempt %d/30  ", attempts);
+        M5.Display.setCursor(10, 75);
+        M5.Display.printf("Attempt %d/30  ", attempts);
     }
 
     if (WiFi.status() != WL_CONNECTED) {
-        StickCP2.Display.setCursor(10, 95);
-        StickCP2.Display.setTextColor(TFT_RED);
-        StickCP2.Display.printf("WiFi failed!");
-        StickCP2.Display.setCursor(10, 115);
-        StickCP2.Display.printf("Press A to retry");
+        M5.Display.setCursor(10, 95);
+        M5.Display.setTextColor(TFT_RED);
+        M5.Display.printf("WiFi failed!");
+        M5.Display.setCursor(10, 115);
+        M5.Display.printf("Press A to retry");
         WiFi.disconnect();
         wifiMode = false;
         // Restart BLE
-        BLEDevice::init(deviceName);
+        NimBLEDevice::init(deviceName);
         return;
     }
 
@@ -620,7 +741,7 @@ void startWifiMode() {
     webServer = new WebServer(80);
 
     webServer->on("/status", HTTP_GET, []() {
-        float batV = StickCP2.Power.getBatteryVoltage() / 1000.0f;
+        float batV = readBatteryVoltageAxp();
         String json = "{";
         json += "\"side\":\"" + String((char)BOOT_SIDE) + "\",";
         json += "\"records\":" + String(recordCount) + ",";
@@ -678,24 +799,24 @@ void startWifiMode() {
 
     webServer->begin();
 
-    StickCP2.Display.fillScreen(BLACK);
-    StickCP2.Display.setTextSize(2);
-    StickCP2.Display.setTextColor(TFT_GREEN);
-    StickCP2.Display.setCursor(10, 10);
-    StickCP2.Display.printf("WiFi Ready");
-    StickCP2.Display.setTextSize(1);
-    StickCP2.Display.setTextColor(TFT_WHITE);
-    StickCP2.Display.setCursor(10, 40);
-    StickCP2.Display.printf("IP: %s", ip.toString().c_str());
-    StickCP2.Display.setCursor(10, 60);
-    StickCP2.Display.printf("Records: %lu", recordCount);
-    StickCP2.Display.setCursor(10, 80);
-    StickCP2.Display.printf("Markers: %d", markerCount);
-    StickCP2.Display.setCursor(10, 105);
-    StickCP2.Display.setTextColor(TFT_CYAN);
-    StickCP2.Display.printf("Phone: open app and");
-    StickCP2.Display.setCursor(10, 118);
-    StickCP2.Display.printf("tap 'Download Data'");
+    M5.Display.fillScreen(BLACK);
+    M5.Display.setTextSize(2);
+    M5.Display.setTextColor(TFT_GREEN);
+    M5.Display.setCursor(10, 10);
+    M5.Display.printf("WiFi Ready");
+    M5.Display.setTextSize(1);
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.setCursor(10, 40);
+    M5.Display.printf("IP: %s", ip.toString().c_str());
+    M5.Display.setCursor(10, 60);
+    M5.Display.printf("Records: %lu", recordCount);
+    M5.Display.setCursor(10, 80);
+    M5.Display.printf("Markers: %d", markerCount);
+    M5.Display.setCursor(10, 105);
+    M5.Display.setTextColor(TFT_CYAN);
+    M5.Display.printf("Phone: open app and");
+    M5.Display.setCursor(10, 118);
+    M5.Display.printf("tap 'Download Data'");
 }
 
 void stopWifiMode() {
@@ -707,60 +828,61 @@ void stopWifiMode() {
     WiFi.disconnect();
     wifiMode = false;
 
-    // Restart BLE
-    BLEDevice::init(deviceName);
-    pServer = BLEDevice::createServer();
+    // Restart BLE (NimBLE 2.x)
+    NimBLEDevice::init(deviceName);
+    pServer = NimBLEDevice::createServer();
     pServer->setCallbacks(new ServerCallbacks());
-    BLEService* pService = pServer->createService(SERVICE_UUID);
+    NimBLEService* pService = pServer->createService(SERVICE_UUID);
 
     pImuChar = pService->createCharacteristic(
         IMU_CHAR_UUID,
-        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
+        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
     );
-    pImuChar->addDescriptor(new BLE2902());
 
     pSideChar = pService->createCharacteristic(
         SIDE_CHAR_UUID,
-        BLECharacteristic::PROPERTY_READ
+        NIMBLE_PROPERTY::READ
     );
     uint8_t sideVal = BOOT_SIDE;
     pSideChar->setValue(&sideVal, 1);
 
     pCmdChar = pService->createCharacteristic(
         CMD_CHAR_UUID,
-        BLECharacteristic::PROPERTY_WRITE
+        NIMBLE_PROPERTY::WRITE
     );
     pCmdChar->setCallbacks(new CmdCallback());
 
     pService->start();
-    BLEDevice::startAdvertising();
+    NimBLEDevice::startAdvertising();
 
     recording = true;
     drawStatus("BLE Mode", TFT_GREEN);
 }
 
+#endif // ENABLE_WIFI_TRANSFER
+
 // ── Display ──
 
 void drawStatus(const char* status, uint16_t color) {
-    StickCP2.Display.fillScreen(BLACK);
-    StickCP2.Display.setTextColor(color);
-    StickCP2.Display.setCursor(10, 10);
-    StickCP2.Display.setTextSize(3);
-    StickCP2.Display.printf("KineticAI");
-    StickCP2.Display.setCursor(10, 45);
-    StickCP2.Display.setTextSize(4);
-    StickCP2.Display.printf("%c", BOOT_SIDE);
-    StickCP2.Display.setCursor(10, 90);
-    StickCP2.Display.setTextSize(2);
-    StickCP2.Display.setTextColor(TFT_WHITE);
-    StickCP2.Display.printf("%s", status);
+    M5.Display.fillScreen(BLACK);
+    M5.Display.setTextColor(color);
+    M5.Display.setCursor(10, 10);
+    M5.Display.setTextSize(3);
+    M5.Display.printf("KineticAI");
+    M5.Display.setCursor(10, 45);
+    M5.Display.setTextSize(4);
+    M5.Display.printf("%c", BOOT_SIDE);
+    M5.Display.setCursor(10, 90);
+    M5.Display.setTextSize(2);
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.printf("%s", status);
 
-    float batV = StickCP2.Power.getBatteryVoltage() / 1000.0f;
+    float batV = readBatteryVoltageAxp();
     int batPct = constrain((int)((batV - 3.2f) / 0.9f * 100), 0, 100);
-    StickCP2.Display.setCursor(10, 118);
-    StickCP2.Display.setTextSize(1);
-    StickCP2.Display.setTextColor(batPct > 20 ? TFT_GREEN : TFT_RED);
-    StickCP2.Display.printf("BAT:%d%% %.2fV  REC:%lu", batPct, batV, recordCount);
+    M5.Display.setCursor(10, 118);
+    M5.Display.setTextSize(1);
+    M5.Display.setTextColor(batPct > 20 ? TFT_GREEN : TFT_RED);
+    M5.Display.printf("BAT:%d%% %.2fV  REC:%lu", batPct, batV, recordCount);
 }
 
 // Display functions are now in display.h

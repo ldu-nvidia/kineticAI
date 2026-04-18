@@ -42,7 +42,7 @@
  */
 
 #pragma once
-#include <M5StickCPlus2.h>
+#include <M5Unified.h>
 #include <Preferences.h>
 
 // ── Display Modes ──
@@ -168,9 +168,9 @@ void processCustomCommand(const uint8_t* data, size_t len) {
             if (len >= 2) {
                 customCfg.displayMode = data[1];
                 if (customCfg.displayMode == DMODE_STEALTH) {
-                    StickCP2.Display.setBrightness(0);
+                    M5.Display.setBrightness(0);
                 } else {
-                    StickCP2.Display.setBrightness(80);
+                    M5.Display.setBrightness(80);
                 }
                 saveCustomConfig();
             }
@@ -318,17 +318,17 @@ const char* customEmoji(int quality) {
  */
 void drawCustomImageMode() {
     if (customCfg.hasCustomImage && customImageBuf) {
-        StickCP2.Display.pushImage(0, 0, IMG_WIDTH, IMG_HEIGHT, customImageBuf);
+        M5.Display.pushImage(0, 0, IMG_WIDTH, IMG_HEIGHT, customImageBuf);
     } else {
-        StickCP2.Display.fillScreen(BLACK);
-        StickCP2.Display.setTextSize(2);
-        StickCP2.Display.setTextColor(TFT_WHITE);
-        StickCP2.Display.setCursor(10, 50);
-        StickCP2.Display.printf("No image");
-        StickCP2.Display.setCursor(10, 80);
-        StickCP2.Display.printf("Upload from");
-        StickCP2.Display.setCursor(10, 110);
-        StickCP2.Display.printf("phone app");
+        M5.Display.fillScreen(BLACK);
+        M5.Display.setTextSize(2);
+        M5.Display.setTextColor(TFT_WHITE);
+        M5.Display.setCursor(10, 50);
+        M5.Display.printf("No image");
+        M5.Display.setCursor(10, 80);
+        M5.Display.printf("Upload from");
+        M5.Display.setCursor(10, 110);
+        M5.Display.printf("phone app");
     }
 }
 
@@ -348,7 +348,7 @@ void drawGifMode() {
     }
 
     if (gifFrames[currentGifFrame]) {
-        StickCP2.Display.pushImage(0, 0, IMG_WIDTH, IMG_HEIGHT, gifFrames[currentGifFrame]);
+        M5.Display.pushImage(0, 0, IMG_WIDTH, IMG_HEIGHT, gifFrames[currentGifFrame]);
     }
 }
 
@@ -356,28 +356,28 @@ void drawGifMode() {
  * Draw emoji-only mode (big emoji, minimal info).
  */
 void drawEmojiMode(float edgeAngle, float gForce) {
-    StickCP2.Display.fillScreen(BLACK);
+    M5.Display.fillScreen(BLACK);
 
     int q = classifyTurn(edgeAngle, gForce);
     uint16_t col = qualityColor(q);
     const char* emoji = customEmoji(q);
 
     // Giant emoji text
-    StickCP2.Display.setTextSize(5);
-    StickCP2.Display.setTextColor(col);
+    M5.Display.setTextSize(5);
+    M5.Display.setTextColor(col);
     int textW = strlen(emoji) * 30;
     int x = (240 - textW) / 2;
     if (x < 5) x = 5;
-    StickCP2.Display.setCursor(x, 30);
-    StickCP2.Display.printf("%s", emoji);
+    M5.Display.setCursor(x, 30);
+    M5.Display.printf("%s", emoji);
 
     // Edge angle below
-    StickCP2.Display.setTextSize(3);
-    StickCP2.Display.setTextColor(TFT_WHITE);
-    StickCP2.Display.setCursor(60, 95);
-    StickCP2.Display.printf("%2.0f", edgeAngle);
-    StickCP2.Display.setTextSize(1);
-    StickCP2.Display.printf("deg");
+    M5.Display.setTextSize(3);
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.setCursor(60, 95);
+    M5.Display.printf("%2.0f", edgeAngle);
+    M5.Display.setTextSize(1);
+    M5.Display.printf("deg");
 }
 
 /**
@@ -389,37 +389,37 @@ void drawShowoffMode(float edgeAngle, float gForce, unsigned long turns) {
     // Alternate between edge angle and G-force every 2 seconds
     bool showEdge = (millis() / 2000) % 2 == 0;
 
-    StickCP2.Display.fillScreen(BLACK);
+    M5.Display.fillScreen(BLACK);
 
     if (showEdge) {
         // Huge edge angle
-        StickCP2.Display.setTextSize(6);
-        StickCP2.Display.setTextColor(accent);
-        StickCP2.Display.setCursor(10, 20);
-        StickCP2.Display.printf("%2.0f", edgeAngle);
-        StickCP2.Display.setTextSize(2);
-        StickCP2.Display.setCursor(10, 85);
-        StickCP2.Display.setTextColor(TFT_WHITE);
-        StickCP2.Display.printf("EDGE ANGLE");
+        M5.Display.setTextSize(6);
+        M5.Display.setTextColor(accent);
+        M5.Display.setCursor(10, 20);
+        M5.Display.printf("%2.0f", edgeAngle);
+        M5.Display.setTextSize(2);
+        M5.Display.setCursor(10, 85);
+        M5.Display.setTextColor(TFT_WHITE);
+        M5.Display.printf("EDGE ANGLE");
     } else {
         // Huge G-force
-        StickCP2.Display.setTextSize(5);
-        StickCP2.Display.setTextColor(gForce > 2.0f ? COL_FIRE : accent);
-        StickCP2.Display.setCursor(10, 20);
-        StickCP2.Display.printf("%.1f", gForce);
-        StickCP2.Display.setTextSize(3);
-        StickCP2.Display.printf("G");
-        StickCP2.Display.setTextSize(2);
-        StickCP2.Display.setCursor(10, 85);
-        StickCP2.Display.setTextColor(TFT_WHITE);
-        StickCP2.Display.printf("G-FORCE");
+        M5.Display.setTextSize(5);
+        M5.Display.setTextColor(gForce > 2.0f ? COL_FIRE : accent);
+        M5.Display.setCursor(10, 20);
+        M5.Display.printf("%.1f", gForce);
+        M5.Display.setTextSize(3);
+        M5.Display.printf("G");
+        M5.Display.setTextSize(2);
+        M5.Display.setCursor(10, 85);
+        M5.Display.setTextColor(TFT_WHITE);
+        M5.Display.printf("G-FORCE");
     }
 
     // Turn count at bottom
-    StickCP2.Display.setTextSize(2);
-    StickCP2.Display.setTextColor(TFT_YELLOW);
-    StickCP2.Display.setCursor(10, 115);
-    StickCP2.Display.printf("TURNS: %lu", turns);
+    M5.Display.setTextSize(2);
+    M5.Display.setTextColor(TFT_YELLOW);
+    M5.Display.setCursor(10, 115);
+    M5.Display.printf("TURNS: %lu", turns);
 }
 
 /**

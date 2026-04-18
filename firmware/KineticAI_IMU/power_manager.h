@@ -22,7 +22,7 @@
  */
 
 #pragma once
-#include <M5StickCPlus2.h>
+#include <M5Unified.h>
 #include <esp_sleep.h>
 
 // ── Power States ──
@@ -68,6 +68,9 @@ static PowerConfig currentConfig = CONFIG_SKIING;
 static unsigned long motionLastDetected = 0;
 static const unsigned long SLEEP_TIMEOUT_MS = 60000; // 60s no motion → sleep
 
+// Forward declarations (functions defined below that are called earlier)
+void enterDeepSleep();
+
 // ── IMU Packet Compression ──
 
 /**
@@ -107,13 +110,13 @@ void setPowerState(PowerState state) {
     switch (state) {
         case PWR_SKIING:
             currentConfig = CONFIG_SKIING;
-            StickCP2.Display.setBrightness(currentConfig.lcdBrightness);
-            StickCP2.Display.wakeup();
+            M5.Display.setBrightness(currentConfig.lcdBrightness);
+            M5.Display.wakeup();
             break;
 
         case PWR_LIFT:
             currentConfig = CONFIG_LIFT;
-            StickCP2.Display.setBrightness(currentConfig.lcdBrightness);
+            M5.Display.setBrightness(currentConfig.lcdBrightness);
             break;
 
         case PWR_SLEEP:
@@ -132,15 +135,15 @@ void setPowerState(PowerState state) {
  */
 void enterDeepSleep() {
     // Show sleep indicator
-    StickCP2.Display.fillScreen(BLACK);
-    StickCP2.Display.setTextSize(2);
-    StickCP2.Display.setTextColor(TFT_DARKGREY);
-    StickCP2.Display.setCursor(30, 50);
-    StickCP2.Display.printf("SLEEP");
-    StickCP2.Display.setCursor(20, 80);
-    StickCP2.Display.setTextSize(1);
-    StickCP2.Display.printf("Move boot to wake");
-    StickCP2.Display.setBrightness(5);
+    M5.Display.fillScreen(BLACK);
+    M5.Display.setTextSize(2);
+    M5.Display.setTextColor(TFT_DARKGREY);
+    M5.Display.setCursor(30, 50);
+    M5.Display.printf("SLEEP");
+    M5.Display.setCursor(20, 80);
+    M5.Display.setTextSize(1);
+    M5.Display.printf("Move boot to wake");
+    M5.Display.setBrightness(5);
 
     // Light sleep loop: wake every 2s, check motion
     while (true) {
@@ -148,7 +151,7 @@ void enterDeepSleep() {
         esp_light_sleep_start();
 
         // Check if there's motion (read IMU quickly)
-        auto data = StickCP2.Imu.getImuData();
+        auto data = M5.Imu.getImuData();
         float accelMag = sqrtf(data.accel.x * data.accel.x +
                                data.accel.y * data.accel.y +
                                data.accel.z * data.accel.z);
@@ -183,8 +186,20 @@ void enterDeepSleep() {
 /**
  * Check if boot should auto-sleep due to inactivity.
  * Call from main loop.
+ *
+ * Disabled by default for dev/desk-testing. On a desk the boot is
+ * stationary, so auto-sleep fires within 60s and the M5 goes dark —
+ * making BLE testing impossible. Re-enable before actual skiing.
  */
+#ifndef ENABLE_AUTO_SLEEP
+#define ENABLE_AUTO_SLEEP 0
+#endif
+
 void checkAutoSleep(float gyroMag) {
+#if !ENABLE_AUTO_SLEEP
+    (void)gyroMag;
+    return;
+#else
     if (currentPowerState == PWR_SLEEP) return;
 
     if (gyroMag > 2.0f) {
@@ -196,6 +211,7 @@ void checkAutoSleep(float gyroMag) {
             setPowerState(PWR_SLEEP);
         }
     }
+#endif
 }
 
 /**
@@ -223,7 +239,7 @@ void processPowerCommand(const uint8_t* data, size_t len) {
 
         case 0x32: // Set LCD brightness
             if (len >= 2) {
-                StickCP2.Display.setBrightness(data[1]);
+                M5.Display.setBrightness(data[1]);
             }
             break;
 
