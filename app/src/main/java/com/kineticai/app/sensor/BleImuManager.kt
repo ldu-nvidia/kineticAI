@@ -95,6 +95,9 @@ class BleImuManager(private val context: Context) {
     private val _thermal = MutableStateFlow<ThermalVisionData?>(null)
     val thermal: StateFlow<ThermalVisionData?> = _thermal
 
+    // Diagnostic: total IMU packets received since connect (for debug tracing)
+    private var imuPacketCount = 0
+
     private val _scanStatus = MutableStateFlow("Idle")
     val scanStatus: StateFlow<String> = _scanStatus
 
@@ -114,26 +117,56 @@ class BleImuManager(private val context: Context) {
             return
         }
 
+        // Idempotent guard — if at least one boot is already connected, don't
+        // tear down the existing GATT connection by rescanning. This is the
+        // key fix for "connection drops when starting a run" — the tracking
+        // service calls startScan() on every run start, and without this
+        // guard we'd flip CONNECTED→SCANNING and reconnect from scratch.
+        if (_leftState.value == ConnectionState.CONNECTED ||
+            _rightState.value == ConnectionState.CONNECTED) {
+            Log.i(TAG, "startScan() skipped — boot already connected")
+            _scanStatus.value = "Connected"
+            return
+        }
+        // Same for mid-connect — don't race a handshake in progress.
+        if (_leftState.value == ConnectionState.CONNECTING ||
+            _rightState.value == ConnectionState.CONNECTING) {
+            Log.i(TAG, "startScan() skipped — connection in progress")
+            return
+        }
+
         scanner = bluetoothAdapter.bluetoothLeScanner
         if (scanner == null) {
             _scanStatus.value = "Scanner not available"
             return
         }
 
+        // Stop any previous scan (SkiTrackingService may have started one at
+        // boot). Without this, a duplicate startScan() fails with error 1
+        // (SCAN_FAILED_ALREADY_STARTED) since the scanner is a singleton.
+        try { scanner?.stopScan(scanCallback) } catch (_: Exception) {}
+
         _scanStatus.value = "Scanning..."
         _leftState.value = ConnectionState.SCANNING
         _rightState.value = ConnectionState.SCANNING
 
-        val filter = ScanFilter.Builder()
-            .setServiceUuid(ParcelUuid(SERVICE_UUID))
-            .build()
+        // Filter by device name rather than service UUID. The firmware puts
+        // the 128-bit service UUID in the scan response (not primary ad)
+        // because name + UUID + flags exceed the 31-byte primary packet;
+        // some Android BLE stacks (notably Samsung's) don't apply a
+        // ServiceUuid filter against scan response data reliably.
+        val filters = listOf(
+            ScanFilter.Builder().setDeviceName("KineticAI-L").build(),
+            ScanFilter.Builder().setDeviceName("KineticAI-R").build()
+        )
 
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
 
         try {
-            scanner?.startScan(listOf(filter), settings, scanCallback)
+            scanner?.startScan(filters, settings, scanCallback)
+            Log.i(TAG, "BLE scan started; looking for KineticAI-L / KineticAI-R")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start scan", e)
             _scanStatus.value = "Scan failed: ${e.message}"
@@ -209,8 +242,12 @@ class BleImuManager(private val context: Context) {
             val name = gatt.device.name ?: "Unknown"
 
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                Log.i(TAG, "Connected to $name, discovering services...")
-                gatt.discoverServices()
+                Log.i(TAG, "Connected to $name, requesting MTU...")
+                // Request larger MTU BEFORE discovering services. Default MTU
+                // is 23 (20-byte payload) which truncates our 34-byte motion
+                // packet. 64 fits comfortably and is supported everywhere.
+                // Service discovery is deferred to onMtuChanged().
+                gatt.requestMtu(64)
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 Log.i(TAG, "Disconnected from $name")
                 when (name) {
@@ -228,6 +265,15 @@ class BleImuManager(private val context: Context) {
         }
 
         @SuppressLint("MissingPermission")
+        override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            Log.i(TAG, "MTU negotiated with ${gatt.device.name}: mtu=$mtu status=$status")
+            // Whether or not the negotiation succeeded, proceed with service
+            // discovery. If MTU stayed at 23, we still get 20-byte packets and
+            // will fail to parse; but at least we won't stall the pipeline.
+            gatt.discoverServices()
+        }
+
+        @SuppressLint("MissingPermission")
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 Log.e(TAG, "Service discovery failed for ${gatt.device.name}")
@@ -240,22 +286,28 @@ class BleImuManager(private val context: Context) {
                 return
             }
 
-            // Read the side characteristic to confirm L/R
-            val sideChar = service.getCharacteristic(SIDE_CHAR_UUID)
-            if (sideChar != null) {
-                gatt.readCharacteristic(sideChar)
-            }
-
-            // Enable notifications on IMU characteristic
+            // Enable notifications on IMU characteristic. This MUST be the first
+            // GATT op after service discovery — Android serializes GATT calls
+            // (only one in flight at a time), so any prior readCharacteristic
+            // would cause writeDescriptor() to be rejected with "prior command
+            // is not finished" and the CCCD write silently fails, leaving
+            // notifications disabled and no packets arriving.
             val imuChar = service.getCharacteristic(IMU_CHAR_UUID)
             if (imuChar != null) {
-                gatt.setCharacteristicNotification(imuChar, true)
+                val enabled = gatt.setCharacteristicNotification(imuChar, true)
                 val descriptor = imuChar.getDescriptor(CCCD_UUID)
-                if (descriptor != null) {
+                val wrote = if (descriptor != null) {
                     descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                     gatt.writeDescriptor(descriptor)
-                }
+                } else false
+                Log.i(TAG, "Enabled IMU notifications on ${gatt.device.name}: localSet=$enabled, cccdWrite=$wrote")
+            } else {
+                Log.e(TAG, "IMU characteristic NOT FOUND on ${gatt.device.name}")
             }
+
+            // NOTE: SIDE char read is skipped — we already know L/R from the
+            // device name ("KineticAI-L" / "-R"). Reading it here would block
+            // the CCCD write above.
 
             // Enable notifications on mic characteristic (after a delay for BLE queue)
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
@@ -309,6 +361,15 @@ class BleImuManager(private val context: Context) {
             characteristic: BluetoothGattCharacteristic,
         ) {
             val data = characteristic.value ?: return
+
+            // Throttled trace: every ~50th IMU packet (= ~1 s at 50 Hz per boot)
+            if (characteristic.uuid == IMU_CHAR_UUID) {
+                imuPacketCount++
+                if (imuPacketCount % 50 == 0) {
+                    Log.i(TAG, "IMU packets from ${gatt.device.name}: total=$imuPacketCount bytes=${data.size}")
+                }
+            }
+
             when (characteristic.uuid) {
                 IMU_CHAR_UUID -> {
                     when (data.size) {

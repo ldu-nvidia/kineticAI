@@ -31,7 +31,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -41,9 +44,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.os.Build
+import com.kineticai.app.KineticAIApp
+import com.kineticai.app.sensor.BleImuManager
 import com.kineticai.app.ui.theme.AccentGreen
 import com.kineticai.app.ui.theme.AccentOrange
 import com.kineticai.app.ui.theme.AccentRed
@@ -58,6 +65,34 @@ fun GearTab(modifier: Modifier = Modifier) {
     var goodEmoji by remember { mutableStateOf("OK!") }
     var okEmoji by remember { mutableStateOf("meh") }
     var badEmoji by remember { mutableStateOf("...") }
+
+    val context = LocalContext.current
+    val app = context.applicationContext as KineticAIApp
+    val bleMgr = app.bleImuManager
+    val scanStatus by bleMgr.scanStatus.collectAsState()
+    val leftState by bleMgr.leftState.collectAsState()
+    val rightState by bleMgr.rightState.collectAsState()
+
+    val requiredPermissions = remember {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            arrayOf(
+                android.Manifest.permission.BLUETOOTH_SCAN,
+                android.Manifest.permission.BLUETOOTH_CONNECT,
+            )
+        } else {
+            arrayOf(
+                android.Manifest.permission.ACCESS_FINE_LOCATION,
+            )
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { results ->
+        if (results.values.all { it }) {
+            bleMgr.startScan()
+        }
+    }
 
     Column(
         modifier = modifier
@@ -89,20 +124,41 @@ fun GearTab(modifier: Modifier = Modifier) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    BootStatus("LEFT", false, SkyBlue)
-                    BootStatus("RIGHT", false, AccentOrange)
+                    BootStatus("LEFT", leftState == BleImuManager.ConnectionState.CONNECTED, SkyBlue)
+                    BootStatus("RIGHT", rightState == BleImuManager.ConnectionState.CONNECTED, AccentOrange)
                 }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "Status: $scanStatus",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
 
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Button(
-                    onClick = { /* BLE scan */ },
+                    onClick = {
+                        // Request runtime BT/location permissions; scan starts in the callback.
+                        permissionLauncher.launch(requiredPermissions)
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = SkyBlue),
                 ) {
                     Icon(Icons.Filled.BluetoothSearching, null, modifier = Modifier.size(18.dp))
                     Text("  Scan for Boots", fontWeight = FontWeight.SemiBold)
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedButton(
+                    onClick = { bleMgr.disconnect() },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Text("Disconnect")
                 }
             }
         }

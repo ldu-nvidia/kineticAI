@@ -126,7 +126,10 @@ class SkiTrackingService : Service() {
         super.onCreate()
         sensorCollector = SensorCollector(this)
         locationTracker = LocationTracker(this)
-        bleImuManager = BleImuManager(this)
+        // Use the app-wide singleton so the Gear tab and the tracking
+        // service share ONE BleImuManager — connecting in either place
+        // feeds data to both.
+        bleImuManager = (application as com.kineticai.app.KineticAIApp).bleImuManager
     }
 
     fun getBleImuManager(): BleImuManager = bleImuManager
@@ -179,23 +182,30 @@ class SkiTrackingService : Service() {
         scope.launch {
             try {
                 sensorCollector.stream().collect { sample ->
-                    _rawImu.value = sample
+                    // When M5 boot sensors are connected, THEY are the source of
+                    // truth for biomechanics — the phone's IMU is in your pocket
+                    // and doesn't reflect ski motion. Skip the IMU path here and
+                    // only use the phone for barometer + (optional) fallback.
+                    val bootConnected = bleImuManager.hasAnyConnection
 
-                    if (sportMode == SportMode.CROSS_COUNTRY) {
-                        xcEngine.processImu(sample)
-                        _xcMetrics.value = xcEngine.getMetrics()
+                    if (!bootConnected) {
+                        _rawImu.value = sample
+                        if (sportMode == SportMode.CROSS_COUNTRY) {
+                            xcEngine.processImu(sample)
+                            _xcMetrics.value = xcEngine.getMetrics()
+                        }
+                        val turn = engine.processImu(sample)
+                        sensorBuffer.add(sample to lastLocation)
+                        _metrics.value = engine.metrics
+                        turn?.let { handleTurn(it) }
                     }
-                    val turn = engine.processImu(sample)
-                    sensorBuffer.add(sample to lastLocation)
 
-                    _metrics.value = engine.metrics
-
+                    // Barometer is only on the phone (M5 Plus has no baro) —
+                    // always feed it regardless of boot connection.
                     if (sample.pressure > 0f) {
                         runLiftDetector.processBarometer(sample.timestamp, sample.pressure)
                         _skiState.value = runLiftDetector.state
                     }
-
-                    turn?.let { handleTurn(it) }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Sensor collection error", e)
